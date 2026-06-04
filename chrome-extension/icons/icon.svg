@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- 背景 -->
+  <rect width="128" height="128" rx="16" fill="#4285f4"/>
+  
+  <!-- 放大镜 -->
+  <circle cx="56" cy="56" r="28" fill="none" stroke="white" stroke-width="8"/>
+  <line x1="76" y1="76" x2="100" y2="100" stroke="white" stroke-width="8" stroke-linecap="round"/>
+  
+  <!-- 图片图标 -->
+  <rect x="38" y="38" width="36" height="36" rx="4" fill="white" opacity="0.9"/>
+  <polygon points="42,68 56,52 64,60 72,52 74,70" fill="#4285f4"/>
+  
+  <!-- 上传箭头 -->
+  <path d="M 90 30 L 90 50 M 80 40 L 90 30 L 100 40" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Image Search Tool</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 400px;
+      height: 480px;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #4285f4, #34a853);
+      color: white;
+      padding: 10px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+
+    .header h1 {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .server-status-mini {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-dot.online {
+      background: #4caf50;
+      box-shadow: 0 0 4px rgba(76, 175, 80, 0.6);
+    }
+
+    .status-dot.offline {
+      background: #f44336;
+    }
+
+    .status-dot.checking {
+      background: #ff9800;
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .icon-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+    }
+
+    .icon-btn:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: white;
+    }
+
+    .icon-btn.active {
+      background: rgba(255,152,0,0.8);
+    }
+
+    .content {
+      flex: 1;
+      padding: 8px 10px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .section {
+      background: white;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      max-width: 100%;
+      overflow: visible;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+    }
+
+    .btn-group-small {
+      display: flex;
+      gap: 2px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: 1px solid #e0e0e0;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      position: relative;
+    }
+
+    .btn-icon:hover {
+      background: #f0f0f0;
+      border-color: #ccc;
+    }
+
+    .btn-icon:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-icon svg {
+      width: 14px;
+      height: 14px;
+      fill: #666;
+    }
+
+    .btn-icon .tooltip {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    .btn-icon .tooltip::before {
+      content: '';
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 4px solid transparent;
+      border-bottom-color: #333;
+    }
+
+    .btn-icon:hover .tooltip {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .image-list {
+      max-height: 200px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 6px;
+      word-break: break-all;
+    }
+
+    .image-item {
+      display: flex;
+      align-items: center;
+      padding: 6px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .image-item:last-child {
+      border-bottom: none;
+    }
+
+    .image-item input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+    .image-item .filename {
+      flex: 1;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .image-item .size {
+      font-size: 10px;
+      color: #999;
+      margin-left: 8px;
+    }
+
+    .image-item .status {
+      font-size: 10px;
+      margin-left: 6px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .image-item .status.downloaded {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .image-item .status.pending {
+      background: #fff3e0;
+      color: #e65100;
+    }
+
+    .image-item .status.local {
+      background: #e3f2fd;
+      color: #1565c0;
+    }
+
+    .image-item .preview-trigger {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      overflow: hidden;
+      cursor: pointer;
+      margin-left: 6px;
+      flex-shrink: 0;
+      border: 1px solid #e0e0e0;
+    }
+
+    .image-item .preview-trigger:hover {
+      border-color: #4285f4;
+    }
+
+    .image-item .preview-trigger img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .preview-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 10000;
+      display: none;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+    }
+
+    .preview-overlay .preview-container {
+      max-width: 90%;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .preview-overlay img {
+      max-width: 100%;
+      max-height: 70vh;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
+    .preview-overlay .preview-info {
+      color: white;
+      font-size: 13px;
+      margin-top: 12px;
+      background: rgba(0,0,0,0.5);
+      padding: 6px 12px;
+      border-radius: 4px;
+    }
+
+    .preview-overlay .preview-close {
+      position: absolute;
+      top: 15px;
+      right: 20px;
+      color: white;
+      font-size: 28px;
+      cursor: pointer;
+      background: rgba(0,0,0,0.5);
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-overlay .preview-close:hover {
+      background: rgba(255,0,0,0.6);
+    }
+
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 8px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-google {
+      background: #fff;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+
+    .btn-google:hover {
+      background: #f5f5f5;
+      border-color: #ccc;
+    }
+
+    .btn-google:disabled {
+      background: #f5f5f5;
+      color: #999;
+      border-color: #eee;
+      cursor: not-allowed;
+    }
+
+    .btn-amazon {
+      background: #fff;
+      color: #999;
+      border: 1px solid #eee;
+      margin-top: 6px;
+      cursor: not-allowed;
+    }
+
+    .btn-amazon .dev-tag {
+      font-size: 10px;
+      background: #ff9800;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 8px;
+    }
+
+    .select-all {
+      display: flex;
+      align-items: center;
+      padding: 6px;
+      background: #f9f9f9;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+
+    .select-all label {
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .progress {
+      margin-top: 8px;
+    }
+
+    .progress-bar {
+      height: 4px;
+      background: #e0e0e0;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: #4285f4;
+      transition: width 0.3s;
+    }
+
+    .progress-text {
+      font-size: 11px;
+      color: #666;
+      text-align: center;
+      margin-top: 4px;
+    }
+
+    .download-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #666;
+      margin-top: 6px;
+    }
+
+    .download-count {
+      font-weight: 500;
+      color: #4285f4;
+    }
+
+    .btn-danger-small {
+      background: #ff5252;
+      color: white;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .btn-danger-small:hover {
+      background: #d32f2f;
+    }
+
+    .btn-danger-small:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .footer {
+      background: white;
+      border-top: 1px solid #e0e0e0;
+      padding: 6px 10px;
+      font-size: 11px;
+      color: #666;
+      text-align: center;
+      flex-shrink: 0;
+      min-height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .footer .status {
+      font-size: 11px;
+    }
+
+    .footer .status.success { color: #2e7d32; }
+    .footer .status.error { color: #c62828; }
+    .footer .status.info { color: #1565c0; }
+
+    .toast-container {
+      position: fixed;
+      top: 50px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: #333;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      opacity: 0;
+      transform: translateY(-10px);
+      animation: toastIn 0.3s ease forwards, toastOut 0.3s ease 4.5s forwards;
+      max-width: 300px;
+      text-align: center;
+    }
+
+    .toast.success { background: #4caf50; }
+    .toast.error { background: #f44336; }
+    .toast.info { background: #2196f3; }
+
+    @keyframes toastIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes toastOut {
+      to { opacity: 0; transform: translateY(-10px); }
+    }
+
+    .debug-panel { display: none; }
+    .debug-panel.visible { display: block; }
+
+    .debug-steps { margin-bottom: 12px; }
+
+    .debug-step {
+      display: flex;
+      align-items: center;
+      padding: 8px;
+      margin-bottom: 4px;
+      background: #f5f5f5;
+      border-radius: 4px;
+      border-left: 3px solid #666;
+    }
+
+    .debug-step.active { border-left-color: #ff9800; background: #fff3e0; }
+    .debug-step.success { border-left-color: #4caf50; background: #e8f5e9; }
+    .debug-step.error { border-left-color: #f44336; background: #ffebee; }
+
+    .debug-step-number {
+      background: #666;
+      color: white;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      margin-right: 10px;
+      flex-shrink: 0;
+    }
+
+    .debug-step.active .debug-step-number { background: #ff9800; }
+    .debug-step.success .debug-step-number { background: #4caf50; }
+    .debug-step.error .debug-step-number { background: #f44336; }
+
+    .debug-step-info { flex: 1; }
+    .debug-step-title { font-size: 12px; font-weight: 500; }
+    .debug-step-desc { font-size: 10px; color: #999; margin-top: 2px; }
+
+    .debug-step-btn {
+      background: #555;
+      border: none;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .debug-step-btn:hover { background: #777; }
+
+    .debug-input-group {
+      margin-top: 12px;
+      padding: 10px;
+      background: #f5f5f5;
+      border-radius: 4px;
+    }
+
+    .debug-input-group label {
+      display: block;
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 4px;
+    }
+
+    .debug-input-group input {
+      width: 100%;
+      padding: 6px 8px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+
+    .debug-input-group input::placeholder { color: #999; }
+
+    .debug-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn-debug {
+      background: #9c27b0;
+      color: white;
+      font-size: 12px;
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-debug:hover { background: #7b1fa2; }
+
+    .debug-log {
+      margin-top: 12px;
+      padding: 8px;
+      background: #1e1e1e;
+      border-radius: 4px;
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: 'Consolas', monospace;
+      font-size: 11px;
+    }
+
+    .debug-log-entry { padding: 2px 0; border-bottom: 1px solid #333; }
+    .debug-log-entry.info { color: #4fc3f7; }
+    .debug-log-entry.success { color: #81c784; }
+    .debug-log-entry.error { color: #e57373; }
+    .debug-log-entry.warn { color: #ffb74d; }
+
+    .settings-section { display: none; }
+
+    .view-container { position: relative; }
+    .main-view, .debug-view { width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔍 Google Image Search</h1>
+    <div class="header-right">
+      <div class="server-status-mini" id="serverStatusMini">
+        <div class="status-dot checking" id="statusDot"></div>
+        <span id="statusLabel">检测中</span>
+      </div>
+      <button class="icon-btn" id="debugToggle" title="调试模式">
+        <svg viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <div class="content">
+    <div class="view-container">
+      <div class="debug-view debug-panel" id="debugPanel">
+        <div class="section">
+          <div class="section-header">
+            <span class="section-title">🛠️ 调试模式</span>
+          </div>
+          
+          <div class="debug-steps">
+            <div class="debug-step" data-step="1">
+              <div class="debug-step-number">1</div>
+              <div class="debug-step-info">
+                <div class="debug-step-title">打开Google搜图</div>
+                <div class="debug-step-desc">打开 https://www.google.com/imghp</div>
+              </div>
+              <button class="debug-step-btn" data-step-btn="1">执行</button>
+            </div>
+            
+            <div class="debug-step" data-step="2">
+              <div class="debug-step-number">2</div>
+              <div class="debug-step-info">
+                <div class="debug-step-title">点击"按图搜索"</div>
+                <div class="debug-step-desc">点击相机图标展开上传区域</div>
+              </div>
+              <button class="debug-step-btn" data-step-btn="2">执行</button>
+            </div>
+            
+            <div class="debug-step" data-step="3">
+              <div class="debug-step-number">3</div>
+              <div class="debug-step-info">
+                <div class="debug-step-title">点击"上传文件"标签</div>
+                <div class="debug-step-desc">切换到文件上传模式</div>
+              </div>
+              <button class="debug-step-btn" data-step-btn="3">执行</button>
+            </div>
+            
+            <div class="debug-step" data-step="4">
+              <div class="debug-step-number">4</div>
+              <div class="debug-step-info">
+                <div class="debug-step-title">服务器选择文件</div>
+                <div class="debug-step-desc">pyautogui粘贴路径并回车</div>
+              </div>
+              <button class="debug-step-btn" data-step-btn="4">执行</button>
+            </div>
+          </div>
+
+          <div class="debug-input-group">
+            <label>自定义选择器 (可选)</label>
+            <input type="text" id="debugSelector" placeholder="例如: div[aria-label='按图搜索']">
+          </div>
+
+          <div class="debug-input-group">
+            <label>文本内容过滤 (可选)</label>
+            <input type="text" id="debugTextFilter" placeholder="例如: 上传文件">
+          </div>
+
+          <div class="debug-input-group">
+            <label>测试文件名 (步骤4用)</label>
+            <input type="text" id="debugFilename" placeholder="例如: image.jpg">
+          </div>
+
+          <div class="debug-actions">
+            <button class="btn-debug" id="debugTestSelectorBtn">测试选择器</button>
+            <button class="btn-debug" id="debugInspectPageBtn">检查页面</button>
+            <button class="btn-debug" id="debugClearLogBtn">清空日志</button>
+          </div>
+
+          <div class="debug-log" id="debugLog">
+            <div class="debug-log-entry info">调试模式已启用</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="main-view" id="mainContent">
+        <div class="section">
+          <div class="section-header">
+            <span class="section-title">📸 图片列表</span>
+            <div class="btn-group-small">
+              <button class="btn-icon" id="scanBtn" title="扫描页面图片">
+                <svg viewBox="0 0 24 24"><path d="M9.5 6.5v3h-3v-3h3M11 5H5v6h6V5zm-1.5 9.5v3h-3v-3h3M11 13H5v6h6v-6zm6.5-6.5v3h-3v-3h3M19 5h-6v6h6V5zm-6 8h1.5v1.5H13V13zm1.5 1.5H16V16h-1.5v-1.5zM16 13h1.5v1.5H16V13zm-3 3h1.5v1.5H13V16zm1.5 1.5H16V19h-1.5v-1.5zM16 16h1.5v1.5H16V16zm1.5-1.5H19V16h-1.5v-1.5zm0 3H19V19h-1.5v-1.5zM22 7h-2V4h-3V2h5v5zm-2 15h-3v-2h3v-3h2v5h-2zM2 22h5v-2H4v-3H2v5zM2 2v5h2V4h3V2H2z"/></svg>
+                <span class="tooltip">扫描页面图片</span>
+              </button>
+              <button class="btn-icon" id="selectLocalBtn" title="选择本地图片">
+                <svg viewBox="0 0 24 24"><path d="M19 7v2.99s-1.99.01-2 0V7h-3s.01-1.99 0-2h3V2h2v3h3v2h-3zm-3 4V8h-3V5H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-8h-3zM5 19l3-4 2 3 3-4 4 5H5z"/></svg>
+                <span class="tooltip">选择本地图片</span>
+              </button>
+              <button class="btn-icon" id="clearImagesBtn" title="清除图片列表" disabled>
+                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                <span class="tooltip">清除图片</span>
+              </button>
+              <button class="btn-icon" id="downloadBtn" title="下载选中图片" disabled>
+                <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <span class="tooltip">下载选中图片</span>
+              </button>
+            </div>
+          </div>
+          
+          <div class="select-all">
+            <input type="checkbox" id="selectAll" checked>
+            <label for="selectAll">全选</label>
+            <span id="imageCount" style="margin-left: auto; font-size: 11px; color: #666;">0 张图片</span>
+          </div>
+          
+          <div class="image-list" id="imageList">
+            <div style="text-align: center; color: #999; padding: 20px;">
+              暂无图片<br><small>点击扫描或选择本地图片</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <button class="btn btn-google" id="searchBtn" disabled>
+            <svg style="width:18px;height:18px;margin-right:8px;" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Google搜图
+          </button>
+          <button class="btn btn-amazon" disabled>
+            <svg style="width:18px;height:18px;margin-right:8px;" viewBox="0 0 48 48">
+              <path fill="#343B45" d="M25.4 25.96c-.74 1.48-2.01 2.44-3.39 2.76-.21 0-.53.1-.85.1-2.33 0-3.71-1.8-3.71-4.45 0-3.4 2.01-4.98 4.55-5.73 1.38-.32 2.97-.42 4.56-.42v1.27c0 2.44.1 4.35-1.16 6.47zm1.17-12.6c-1.38.1-2.97.21-4.56.42-2.44.32-4.87.74-6.88 1.7-3.92 1.59-6.57 4.98-6.57 9.96 0 6.26 4.03 9.43 9.11 9.43 1.7 0 3.07-.21 4.34-.53 2.02-.64 3.71-1.8 5.72-3.92 1.17 1.59 1.49 2.33 3.5 4.03.53.21 1.06.21 1.48-.1 1.27-1.06 3.5-2.97 4.66-4.03.53-.42.43-1.06.11-1.59-1.16-1.48-2.33-2.76-2.33-5.62V13.56c0-4.03.33-7.74-2.64-10.49C30.07.85 26.25 0 23.28 0h-1.27C16.61.31 10.89 2.65 9.62 9.32c-.21.85.43 1.17.85 1.27l5.93.74c.64-.11.96-.64 1.06-1.17.53-2.33 2.44-3.5 4.55-3.71h.43c1.27 0 2.65.53 3.39 1.59.85 1.27.74 2.97.74 4.45v.85z"/>
+              <path fill="#FF9A00" d="M48 35.95v-.01c-.02-.5-.13-.88-.34-1.2l-.02-.03-.03-.03c-.21-.23-.41-.32-.63-.42-.66-.25-1.61-.39-2.76-.39-.83 0-1.74.08-2.66.28l-.01-.06-.92.31-.02.01-.52.17v.02c-.61.25-1.17.57-1.68.94-.32.24-.59.56-.6 1.05-.01.27.13.57.36.75.22.18.48.24.71.24.05 0 .1 0 .15-.01l.04-.01.04-.01c.45-.1 1.11-.17 1.88-.28.66-.07 1.36-.13 1.97-.13.43 0 .82.03 1.08.06.13.03.23.06.28.08.02.01.03.01.04.02.01.04.03.13.03.27.01.51-.21 1.45-.5 2.37-.29.93-.64 1.85-.87 2.46-.06.14-.09.3-.09.47-.01.25.1.55.31.75.22.18.49.26.72.26h.01c.34 0 .63-.14.87-.33 2.34-2.11 3.16-5.48 3.19-7.37zM41.05 38.87c-.24 0-.49.06-.72.16-.26.1-.52.22-.78.33l-.37.15-.47.19v.01c-5.15 2.09-10.56 3.31-15.57 3.42-.18.01-.36.01-.54.01-7.87.01-14.3-3.64-20.78-7.24-.23-.12-.46-.18-.69-.18-.29 0-.59.11-.81.31-.22.21-.35.51-.32.81 0 .4.21.76.51.99 6.08 5.29 12.74 10.2 21.7 10.22.18 0 .35 0 .53-.01 5.71-.13 12.15-2.06 17.16-5.2l.03-.02c.66-.39 1.31-.84 1.93-1.33.38-.29.65-.73.65-1.2-.02-.82-.72-1.37-1.47-1.37z"/>
+            </svg>
+            Amazon搜图
+            <span class="dev-tag">开发中</span>
+          </button>
+          <div class="download-status">
+            <span id="downloadCount"></span>
+            <button class="btn-danger-small" id="clearDownloadBtn" style="display: none;">清空下载记录</button>
+          </div>
+        </div>
+
+        <div class="progress" id="progressSection" style="display: none;">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+          </div>
+          <div class="progress-text" id="progressText">准备中...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section settings-section">
+      <input type="text" id="serverUrl" value="http://localhost:5000">
+    </div>
+  </div>
+
+  <div class="footer" id="footer">
+    <span class="status" id="status">就绪</span>
+  </div>
+
+  <div class="preview-overlay" id="previewOverlay">
+    <div class="preview-close" id="previewClose">✕</div>
+    <div class="preview-container">
+      <img id="previewImage" src="" alt="">
+      <div class="preview-info" id="previewInfo"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Chrome Extension
+chrome-extension/.vscode/
+
+# Local Server
+local-server/venv/
+local-server/build/
+local-server/dist/
+local-server/__pycache__/
+local-server/*.pyc
+
+# Sensitive Data
+.env
+*.env.local
+config.local.yaml
+
+# Temporary Files
+*.tmp
+*.bak
+*.bak.*
