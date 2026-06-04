@@ -13,8 +13,8 @@
     13|from datetime import datetime
     14|from threading import Thread
     15|
-    16|from flask import Flask, request, jsonify
-    17|from flask_cors import CORS
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
     18|
     19|logging.basicConfig(
     20|    level=logging.INFO,
@@ -48,12 +48,19 @@
     48|    return datetime.now().strftime('%Y%m%d')
     49|
     50|
-    51|def get_work_dir():
-    52|    base = get_base_dir()
-    53|    today = get_today_dir()
-    54|    work_dir = base / "qingqing_helper_dir" / today
-    55|    work_dir.mkdir(parents=True, exist_ok=True)
-    56|    return work_dir
+def get_work_dir():
+    base = get_base_dir()
+    today = get_today_dir()
+    work_dir = base / "qingqing_helper_dir" / today
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return work_dir
+
+
+def get_images_dir():
+    """获取图片存储目录（用于静态服务）"""
+    images_dir = Path(__file__).parent / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    return images_dir
     57|
     58|
     59|def find_file(filename):
@@ -306,9 +313,56 @@
    318|
    319|# ==================== Flask路由 ====================
    320|
-   321|@app.route('/api/health', methods=['GET'])
-   322|def health_check():
-   323|    return jsonify({'status': 'ok', 'message': '服务正常'})
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'ok', 'message': '服务正常'})
+
+
+@app.route('/images/<path:filename>')
+def serve_image(filename):
+    """提供图片静态访问"""
+    images_dir = get_images_dir()
+    return send_from_directory(str(images_dir), filename)
+
+
+@app.route('/api/save-local-image', methods=['POST'])
+def save_local_image():
+    """保存本地图片到服务器"""
+    data = request.json
+    filename = data.get('filename', '')
+    file_data = data.get('fileData', '')
+    
+    if not filename or not file_data:
+        return jsonify({'success': False, 'error': '参数不完整'})
+    
+    try:
+        import base64
+        
+        images_dir = get_images_dir()
+        
+        # 解析base64数据
+        if file_data.startswith('data:'):
+            # 移除data:image/xxx;base64,前缀
+            file_data = file_data.split(',')[1]
+        
+        file_bytes = base64.b64decode(file_data)
+        
+        # 保存文件
+        file_path = images_dir / filename
+        with open(file_path, 'wb') as f:
+            f.write(file_bytes)
+        
+        logger.info(f"保存本地图片: {file_path}")
+        
+        return jsonify({
+            'success': True,
+            'path': str(file_path),
+            'url': f'/images/{filename}'
+        })
+        
+    except Exception as e:
+        logger.error(f"保存图片失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
    324|
    325|
    326|@app.route('/api/get-download-dir', methods=['GET'])
@@ -445,4 +499,4 @@ def select_file_and_upload():
    456|    logger.info("服务器地址: http://localhost:5000")
    457|    logger.info("=" * 50)
    458|
-   459|    app.run(host='0.0.0.0', port=5000, debug=False)
+   459|    app.run(host='0.0.0.0', port=5277, debug=False)

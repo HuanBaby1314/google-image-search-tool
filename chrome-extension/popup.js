@@ -390,27 +390,53 @@ async function selectLocalImages() {
     if (files.length === 0) return;
     
     let addedCount = 0;
+    const serverUrl = document.getElementById('serverUrl').value;
     
     for (const file of files) {
       if (images.some(img => img.filename === file.name && img.source === 'local')) {
         continue;
       }
       
-      const objectUrl = URL.createObjectURL(file);
-      const dimensions = await getImageDimensions(objectUrl);
-      
-      images.push({
-        src: objectUrl,
-        filename: file.name,
-        width: dimensions.width,
-        height: dimensions.height,
-        alt: file.name,
-        source: 'local',
-        isLocal: true,
-        localFile: file
-      });
-      
-      addedCount++;
+      try {
+        // 读取文件为base64
+        const base64 = await readFileAsBase64(file);
+        
+        // 上传到服务器
+        const response = await fetch(`${serverUrl}/api/save-local-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            fileData: base64
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          // 使用服务器返回的URL访问图片
+          const imageUrl = `${serverUrl}${result.url}`;
+          const dimensions = await getImageDimensions(imageUrl);
+          
+          images.push({
+            src: imageUrl,
+            filename: file.name,
+            width: dimensions.width,
+            height: dimensions.height,
+            alt: file.name,
+            source: 'local',
+            isLocal: true
+          });
+          
+          addedCount++;
+        } else {
+          showToast(`上传失败: ${file.name}`, 'error');
+        }
+      } catch (error) {
+        console.error('上传本地图片失败:', error);
+        showToast(`上传失败: ${file.name}`, 'error');
+      }
     }
     
     if (addedCount > 0) {
@@ -424,6 +450,16 @@ async function selectLocalImages() {
   };
   
   input.click();
+}
+
+// 读取文件为base64
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function getImageDimensions(url) {

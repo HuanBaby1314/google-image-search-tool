@@ -45,7 +45,7 @@ async function startHeartbeat() {
 async function checkServerHealth() {
   try {
     const settings = await chrome.storage.local.get(['serverUrl']);
-    const serverUrl = settings.serverUrl || 'http://localhost:5000';
+    const serverUrl = settings.serverUrl || 'http://localhost:5277';
     
     const startTime = Date.now();
     const response = await fetch(`${serverUrl}/api/health`, {
@@ -363,7 +363,7 @@ function getPageInfo() {
 async function executeGoogleSearch(imageInfo) {
   const { filename, isLocal } = imageInfo;
   const settings = await chrome.storage.local.get(['serverUrl']);
-  const serverUrl = settings.serverUrl || 'http://localhost:5000';
+  const serverUrl = settings.serverUrl || 'http://localhost:5277';
   
   const logs = [];
   

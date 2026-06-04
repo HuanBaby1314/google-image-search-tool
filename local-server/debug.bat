@@ -6,7 +6,7 @@ echo Google Image Search - Debug Mode
 echo ========================================
 echo.
 echo Work dir: %USERPROFILE%\Downloads\qingqing_helper_dir
-echo Server: http://localhost:5000
+echo Server: http://localhost:5277
 echo.
 echo Press Ctrl+C to stop
 echo ========================================

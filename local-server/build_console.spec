@@ -6,11 +6,14 @@ from pathlib import Path
 
 block_cipher = None
 
+# 获取 chrome-extension 目录路径（在项目根目录）
+chrome_ext_dir = Path('../chrome-extension').absolute()
+
 a = Analysis(
     ['tray_service.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[(str(chrome_ext_dir), 'chrome-extension')],
     hiddenimports=[
         'pystray._win32',
         'PIL._tkinter_finder',

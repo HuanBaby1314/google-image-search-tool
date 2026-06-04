@@ -1,33 +1,32 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller config - Service program (server.exe)
+# PyInstaller config - Installer (qingqingHelper.exe)
 
 import sys
 from pathlib import Path
 
 block_cipher = None
 
-# 获取 chrome-extension 目录路径（在项目根目录）
+# 获取需要打包的资源
 chrome_ext_dir = Path('../chrome-extension').absolute()
+server_exe = Path('dist/server.exe').absolute()
+
+datas = [
+    (str(chrome_ext_dir), 'chrome-extension'),
+]
+# 如果 server.exe 存在，打包进去
+if server_exe.exists():
+    datas.append((str(server_exe), '.'))
 
 a = Analysis(
-    ['tray_service.py'],
+    ['installer.py'],
     pathex=[],
     binaries=[],
-    datas=[(str(chrome_ext_dir), 'chrome-extension')],
+    datas=datas,
     hiddenimports=[
-        'pystray._win32',
-        'PIL._tkinter_finder',
-        'flask',
-        'flask_cors',
-        'pyautogui',
-        'pyperclip',
-        'pygetwindow',
-        'win32gui',
-        'win32con',
-        'win32com.client',
         'tkinter',
         'tkinter.filedialog',
         'tkinter.messagebox',
+        'tkinter.ttk',
     ],
     hookspath=[],
     hooksconfig={},
@@ -41,15 +40,14 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# 服务程序
-server_exe = EXE(
+installer_exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
     a.zipfiles,
     a.datas,
     [],
-    name='server',
+    name='qingqingHelper',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
