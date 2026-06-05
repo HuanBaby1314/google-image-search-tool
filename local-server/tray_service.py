@@ -78,7 +78,10 @@ def select_install_directory():
                 self.root.geometry("600x500")
                 self.root.resizable(False, False)
 
-                self.install_dir = tk.StringVar(value=r"C:\Program Files (x86)")
+                # 读取上次安装目录
+                last_install_dir = self._load_last_install_dir()
+                self.install_dir = tk.StringVar(value=last_install_dir or r"C:\Program Files (x86)")
+                
                 self.current_page = 0
                 self.pages = []
 
@@ -92,6 +95,34 @@ def select_install_directory():
                 self.root.deiconify()
                 self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+            def _load_last_install_dir(self):
+                """读取上次安装目录"""
+                exe_dir = get_exe_location()
+                
+                for cfg_path in [exe_dir / "config.json", exe_dir.parent / "config.json"]:
+                    if cfg_path.exists():
+                        try:
+                            with open(cfg_path, 'r', encoding='utf-8') as f:
+                                config = json.load(f)
+                            if 'install_dir' in config:
+                                return config['install_dir']
+                            if 'app_dir' in config:
+                                return str(Path(config['app_dir']).parent)
+                        except:
+                            pass
+                
+                for txt_path in [exe_dir / "install_path.txt", exe_dir.parent / "install_path.txt"]:
+                    if txt_path.exists():
+                        try:
+                            with open(txt_path, 'r', encoding='utf-8') as f:
+                                path = f.read().strip()
+                            if path and Path(path).exists():
+                                return path
+                        except:
+                            pass
+                
+                return None
+
             def create_pages(self):
                 self.pages = [
                     self._page_welcome(),
@@ -104,8 +135,11 @@ def select_install_directory():
             def _pack_buttons(self, page, buttons):
                 bar = tk.Frame(page)
                 bar.pack(side="bottom", fill="x", padx=30, pady=15)
+                # 右对齐：创建内部框架并右对齐
+                inner = tk.Frame(bar)
+                inner.pack(side="right")
                 for text, callback in buttons:
-                    tk.Button(bar, text=text, command=callback,
+                    tk.Button(inner, text=text, command=callback,
                               width=10, font=("Microsoft YaHei", 10)).pack(side="left", padx=5)
 
             def _page_welcome(self):
@@ -225,6 +259,14 @@ def select_install_directory():
 
             def finish(self):
                 result['install_dir'] = Path(self.install_dir.get()) / APP_DIR_NAME
+                # 启动服务
+                exe_path = result['install_dir'] / "bin" / "qingqingHelper.exe"
+                if exe_path.exists():
+                    try:
+                        os.startfile(str(exe_path))
+                        print(f"服务已启动: {exe_path}")
+                    except Exception as e:
+                        print(f"启动服务失败: {e}")
                 self.root.destroy()
 
             def browse_directory(self):
@@ -272,6 +314,37 @@ def select_install_directory():
             def do_install(self):
                 install_path = Path(self.install_dir.get()) / APP_DIR_NAME
                 try:
+                    # 检测并关闭已运行的服务（通过端口检测，避免杀掉安装器自己）
+                    self.log("检查已运行的服务...")
+                    self.install_status.config(text="检查已运行的服务...")
+                    try:
+                        import subprocess
+                        # 用 netstat 查找占用 5277 端口的进程
+                        result = subprocess.run(
+                            ['netstat', '-ano', '-p', 'tcp'],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        # 查找包含 :5277 的行
+                        pid_to_kill = None
+                        for line in result.stdout.splitlines():
+                            if ':5277' in line and 'LISTENING' in line:
+                                parts = line.split()
+                                if parts:
+                                    pid_to_kill = parts[-1]
+                                    break
+                        
+                        if pid_to_kill and pid_to_kill != str(os.getpid()):
+                            self.log(f"检测到服务进程 (PID: {pid_to_kill})，正在关闭...")
+                            subprocess.run(['taskkill', '/F', '/PID', pid_to_kill], 
+                                         capture_output=True, timeout=10)
+                            import time
+                            time.sleep(1)
+                            self.log("✓ 已关闭旧服务")
+                        else:
+                            self.log("✓ 没有检测到运行中的服务")
+                    except Exception as e:
+                        self.log(f"! 检查服务状态失败: {e}，继续安装...")
+
                     self.log("创建安装目录...")
                     self.install_status.config(text="创建目录结构...")
                     self.progress['value'] = 10
@@ -638,14 +711,33 @@ def calculate_screen_position(viewport_x, viewport_y, nav_bar_height=85):
     
     return screen_x, screen_y
 
-def click_at_position(viewport_x, viewport_y, nav_bar_height=85):
-    """点击浏览器页面中的元素"""
+def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0, element_height=0):
+    """点击浏览器页面中的元素，基于元素尺寸做随机偏移"""
     if not DEPENDENCIES_OK:
         logger.error("pyautogui不可用")
         return False
     
     try:
-        screen_x, screen_y = calculate_screen_position(viewport_x, viewport_y, nav_bar_height)
+        import random
+        
+        # 基于元素尺寸计算随机偏移（点击在元素中心附近的随机位置，排除边界2像素）
+        # 偏移偏向右上方
+        offset_x = 0
+        offset_y = 0
+        if element_width > 0 and element_height > 0:
+            margin = 2  # 排除边界像素
+            # 可用范围：元素半宽减去边距
+            range_x = max(0, element_width / 2 - margin)
+            range_y = max(0, element_height / 2 - margin)
+            # 偏向右方：[0, range_x] 范围
+            offset_x = random.uniform(0, range_x)
+            # 偏向上方：[-range_y, 0] 范围（Y轴向上为负）
+            offset_y = random.uniform(-range_y, 0)
+        
+        adjusted_x = viewport_x + offset_x
+        adjusted_y = viewport_y + offset_y
+        
+        screen_x, screen_y = calculate_screen_position(adjusted_x, adjusted_y, nav_bar_height)
         
         if screen_x is None or screen_y is None:
             return False
@@ -667,14 +759,23 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85):
 def find_file_dialog(target_title='打开'):
     """查找文件对话框"""
     if not DEPENDENCIES_OK:
+        logger.error("find_file_dialog: DEPENDENCIES_OK=False")
         return None
     
     result = []
+    all_windows = []
     
     def callback(hwnd, _):
         if win32gui.IsWindowVisible(hwnd):
             title = win32gui.GetWindowText(hwnd)
             class_name = win32gui.GetClassName(hwnd)
+            
+            # 记录所有可见窗口
+            all_windows.append({
+                'hwnd': hwnd,
+                'title': title,
+                'class': class_name
+            })
             
             if class_name == '#32770' or any(kw in title for kw in ['打开', 'Open', '选择', 'Choose']):
                 result.append({
@@ -685,25 +786,69 @@ def find_file_dialog(target_title='打开'):
     
     try:
         win32gui.EnumWindows(callback, None)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"EnumWindows 异常: {e}")
+    
+    # 输出日志
+    logger.info(f"[窗口检测] 目标标题: '{target_title}'")
+    logger.info(f"[窗口检测] 扫描到 {len(all_windows)} 个可见窗口")
+    
+    if all_windows:
+        logger.info("[窗口检测] 所有可见窗口:")
+        for w in all_windows[:20]:  # 最多显示20个
+            logger.info(f"  - hwnd={w['hwnd']}, title='{w['title']}', class='{w['class']}'")
+    
+    logger.info(f"[窗口检测] 匹配到 {len(result)} 个候选对话框")
+    
+    if result:
+        for r in result:
+            logger.info(f"  - hwnd={r['hwnd']}, title='{r['title']}', exact={r['exact_match']}")
     
     exact = [d for d in result if d['exact_match']]
     if exact:
+        logger.info(f"[窗口检测] 精确匹配: '{exact[0]['title']}'")
         return exact[0]
     
     partial = [d for d in result if target_title in d['title']]
     if partial:
+        logger.info(f"[窗口检测] 部分匹配: '{partial[0]['title']}'")
         return partial[0]
     
-    return result[0] if result else None
+    if result:
+        logger.info(f"[窗口检测] 使用第一个候选: '{result[0]['title']}'")
+        return result[0]
+    
+    logger.warning("[窗口检测] 未找到任何匹配的对话框窗口")
+    return None
+
+def wait_for_file_dialog(target_title='打开', timeout=5.0, interval=0.2):
+    """轮询等待文件对话框出现"""
+    logger.info(f"[轮询] 等待对话框: '{target_title}', 超时: {timeout}s")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        dialog = find_file_dialog(target_title)
+        if dialog:
+            elapsed = timeout - (deadline - time.time())
+            logger.info(f"[轮询] 对话框已出现，耗时: {elapsed:.1f}s")
+            return dialog
+        time.sleep(interval)
+    logger.warning(f"[轮询] 等待超时 {timeout}s，对话框未出现")
+    return None
+
+def wait_for_window_focus(hwnd, timeout=2.0, interval=0.1):
+    """轮询等待窗口获得焦点"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if win32gui.GetForegroundWindow() == hwnd:
+            return True
+        time.sleep(interval)
+    return False
 
 def focus_window(hwnd):
     """聚焦窗口"""
     try:
         if win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            time.sleep(0.2)
         
         try:
             shell = __import__('win32com.client').Dispatch("WScript.Shell")
@@ -712,14 +857,17 @@ def focus_window(hwnd):
             pass
         
         win32gui.SetForegroundWindow(hwnd)
-        time.sleep(0.3)
-        return True
+        # 轮询等待窗口获得焦点
+        if wait_for_window_focus(hwnd, timeout=1.0):
+            return True
+        logger.warning("聚焦窗口超时")
+        return True  # 仍然返回 True，继续尝试操作
     except Exception as e:
         logger.warning(f"聚焦窗口失败: {e}")
         return False
 
 def select_file_in_dialog(file_path):
-    """在文件对话框中选择文件"""
+    """在文件对话框中选择文件（假设对话框已打开）"""
     if not DEPENDENCIES_OK:
         logger.error("pyautogui不可用")
         return False
@@ -729,20 +877,6 @@ def select_file_in_dialog(file_path):
     if not os.path.exists(file_path):
         logger.error(f"文件不存在: {file_path}")
         return False
-
-    logger.info(f"准备上传文件: {file_path}")
-
-    time.sleep(1.5)
-    
-    dialog = find_file_dialog(target_title='打开')
-    
-    if dialog:
-        hwnd = dialog['hwnd']
-        logger.info(f"找到对话框: '{dialog['title']}'")
-        focus_window(hwnd)
-        time.sleep(0.5)
-    else:
-        logger.warning("未找到文件对话框")
 
     try:
         try:
@@ -767,11 +901,56 @@ def select_file_in_dialog(file_path):
         except:
             pass
         
-        logger.info("文件上传完成")
+        logger.info("文件选择完成")
         return True
         
     except Exception as e:
         logger.error(f"操作失败: {e}")
+        return False
+
+def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height, 
+                           button_width, button_height, max_retries=3):
+    """
+    文件上传流程（重试逻辑由扩展端处理）：
+    1. 点击上传按钮
+    2. 等待对话框出现
+    3. 对话框出现后选择文件
+    """
+    if not DEPENDENCIES_OK:
+        logger.error("pyautogui不可用")
+        return False
+
+    file_path = os.path.abspath(file_path)
+    if not os.path.exists(file_path):
+        logger.error(f"文件不存在: {file_path}")
+        return False
+
+    # 点击上传按钮
+    if button_x is not None and button_y is not None:
+        logger.info(f"[上传] 点击按钮 ({button_x}, {button_y})")
+        if not click_at_position(button_x, button_y, nav_bar_height, button_width, button_height):
+            logger.warning(f"[上传] 点击按钮失败")
+            return False
+    
+    # 等待对话框出现
+    dialog = wait_for_file_dialog(target_title='打开', timeout=3.0, interval=0.2)
+    
+    if dialog:
+        hwnd = dialog['hwnd']
+        logger.info(f"[上传] 找到对话框: '{dialog['title']}'")
+        focus_window(hwnd)
+        time.sleep(0.3)
+        
+        # 选择文件
+        success = select_file_in_dialog(file_path)
+        if success:
+            logger.info(f"[上传] 文件上传成功")
+            return True
+        else:
+            logger.warning(f"[上传] 文件选择失败")
+            return False
+    else:
+        logger.warning(f"[上传] 对话框未出现")
         return False
 
 # ==================== Flask路由 ====================
@@ -846,6 +1025,8 @@ def select_file_and_upload():
     button_x = data.get('buttonX')
     button_y = data.get('buttonY')
     nav_bar_height = data.get('navBarHeight', 85)
+    button_width = data.get('buttonWidth', 0)
+    button_height = data.get('buttonHeight', 0)
     
     if not filename:
         return jsonify({'success': False, 'error': '文件名为空'})
@@ -861,13 +1042,11 @@ def select_file_and_upload():
     logger.info(f"找到文件: {full_path}")
 
     try:
-        if button_x is not None and button_y is not None:
-            if not click_at_position(button_x, button_y, nav_bar_height):
-                return jsonify({'success': False, 'error': '点击按钮失败'})
-            
-            time.sleep(1.5)
-        
-        success = select_file_in_dialog(full_path)
+        # 使用带重试的上传流程
+        success = upload_file_with_retry(
+            full_path, button_x, button_y, nav_bar_height,
+            button_width, button_height, max_retries=3
+        )
         
         if success:
             return jsonify({'success': True, 'message': '文件选择成功'})

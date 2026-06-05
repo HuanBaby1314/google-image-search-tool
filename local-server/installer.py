@@ -48,7 +48,10 @@ class InstallerWizard:
         self.root.geometry(WIN_SIZE)
         self.root.resizable(False, False)
 
-        self.install_dir = tk.StringVar(value=DEFAULT_INSTALL_DIR)
+        # 读取上次安装目录
+        last_install_dir = self._load_last_install_dir()
+        self.install_dir = tk.StringVar(value=last_install_dir or DEFAULT_INSTALL_DIR)
+        
         self.current_page = 0
         self.pages = []
 
@@ -56,6 +59,40 @@ class InstallerWizard:
         self.show_page(0)
         self.center_window()
         self.root.deiconify()
+
+    def _load_last_install_dir(self):
+        """读取上次安装目录"""
+        # 检查 exe 同目录和上级目录的 config.json
+        if getattr(sys, 'frozen', False):
+            exe_dir = Path(sys.executable).parent
+        else:
+            exe_dir = Path(__file__).parent
+        
+        for cfg_path in [exe_dir / "config.json", exe_dir.parent / "config.json"]:
+            if cfg_path.exists():
+                try:
+                    with open(cfg_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                    # 返回 install_dir（父目录）或 app_dir
+                    if 'install_dir' in config:
+                        return config['install_dir']
+                    if 'app_dir' in config:
+                        return str(Path(config['app_dir']).parent)
+                except:
+                    pass
+        
+        # 检查 install_path.txt（兼容旧版本）
+        for txt_path in [exe_dir / "install_path.txt", exe_dir.parent / "install_path.txt"]:
+            if txt_path.exists():
+                try:
+                    with open(txt_path, 'r', encoding='utf-8') as f:
+                        path = f.read().strip()
+                    if path and Path(path).exists():
+                        return path
+                except:
+                    pass
+        
+        return None
 
     def center_window(self):
         self.root.update_idletasks()
@@ -81,12 +118,15 @@ class InstallerWizard:
 
     def _pack_buttons(self, page, buttons):
         """
-        buttons: [(text, callback), ...] 从左到右排列
+        buttons: [(text, callback), ...] 从左到右排列，右对齐
         """
         bar = tk.Frame(page)
         bar.pack(side="bottom", fill="x", padx=30, pady=15)
+        # 右对齐：创建内部框架并右对齐
+        inner = tk.Frame(bar)
+        inner.pack(side="right")
         for text, callback in buttons:
-            tk.Button(bar, text=text, command=callback,
+            tk.Button(inner, text=text, command=callback,
                       width=10, font=("Microsoft YaHei", 10)).pack(side="left", padx=5)
 
     # ============================================================
@@ -266,6 +306,15 @@ class InstallerWizard:
         self.root.destroy()
 
     def finish(self):
+        # 启动服务
+        install_path = Path(self.install_dir.get()) / APP_DIR_NAME
+        exe_path = install_path / "bin" / "qingqingHelper.exe"
+        if exe_path.exists():
+            try:
+                os.startfile(str(exe_path))
+                print(f"服务已启动: {exe_path}")
+            except Exception as e:
+                print(f"启动服务失败: {e}")
         self.root.destroy()
 
     # ============================================================
@@ -330,6 +379,37 @@ class InstallerWizard:
     def _do_install(self):
         install_path = Path(self.install_dir.get()) / APP_DIR_NAME
         try:
+            # 检测并关闭已运行的服务（通过端口检测，避免杀掉安装器自己）
+            self._log("检查已运行的服务...")
+            self.install_status.config(text="检查已运行的服务...")
+            try:
+                import subprocess
+                # 用 netstat 查找占用 5277 端口的进程
+                result = subprocess.run(
+                    ['netstat', '-ano', '-p', 'tcp'],
+                    capture_output=True, text=True, timeout=10
+                )
+                # 查找包含 :5277 的行
+                pid_to_kill = None
+                for line in result.stdout.splitlines():
+                    if ':5277' in line and 'LISTENING' in line:
+                        parts = line.split()
+                        if parts:
+                            pid_to_kill = parts[-1]
+                            break
+                
+                if pid_to_kill and pid_to_kill != str(os.getpid()):
+                    self._log(f"检测到服务进程 (PID: {pid_to_kill})，正在关闭...")
+                    subprocess.run(['taskkill', '/F', '/PID', pid_to_kill], 
+                                 capture_output=True, timeout=10)
+                    import time
+                    time.sleep(1)
+                    self._log("✓ 已关闭旧服务")
+                else:
+                    self._log("✓ 没有检测到运行中的服务")
+            except Exception as e:
+                self._log(f"! 检查服务状态失败: {e}，继续安装...")
+
             self._log("创建安装目录...")
             self.install_status.config(text="创建目录结构...")
             self.progress["value"] = 10
