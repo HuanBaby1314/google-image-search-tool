@@ -7,15 +7,19 @@ from pathlib import Path
 block_cipher = None
 
 # 获取需要打包的资源
-chrome_ext_dir = Path('../chrome-extension').absolute()
+chrome_ext_dir = Path('../extensions/qingqingHelper').absolute()
 server_exe = Path('dist/server.exe').absolute()
+uninstall_exe = Path('dist/uninstall.exe').absolute()
 
 datas = [
-    (str(chrome_ext_dir), 'chrome-extension'),
+    (str(chrome_ext_dir), 'extensions/qingqingHelper'),
 ]
 # 如果 server.exe 存在，打包进去
 if server_exe.exists():
     datas.append((str(server_exe), '.'))
+# 如果 uninstall.exe 存在，打包进去
+if uninstall_exe.exists():
+    datas.append((str(uninstall_exe), '.'))
 
 a = Analysis(
     ['installer.py'],

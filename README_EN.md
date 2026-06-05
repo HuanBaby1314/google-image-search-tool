@@ -33,7 +33,7 @@
 3. Go to `chrome://extensions/` or `edge://extensions/`
 4. Enable "Developer mode"
 5. Click "Load unpacked"
-6. Select `chrome-extension` folder
+6. Select `extensions/qingqingHelper` folder
 
 ### 2. Start Local Service
 
@@ -95,12 +95,13 @@ python server.py
 
 ```
 google-image-search-tool/
-├── chrome-extension/          # Chrome Extension
-│   ├── manifest.json          # Extension config
-│   ├── background.js          # Background service
-│   ├── popup.html             # Popup UI
-│   ├── popup.js               # UI logic
-│   └── icons/                 # Extension icons
+├── extensions/
+│   └── qingqingHelper/        # Chrome Extension
+│       ├── manifest.json          # Extension config
+│       ├── background.js          # Background service
+│       ├── popup.html             # Popup UI
+│       ├── popup.js               # UI logic
+│       └── icons/                 # Extension icons
 ├── local-server/              # Local Server
 │   ├── server.py              # Flask server (dev)
 │   ├── tray_service.py        # System tray (production)

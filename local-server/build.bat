@@ -10,7 +10,7 @@ cd /d "%~dp0"
 echo Working dir: %cd%
 echo.
 
-echo [1/6] Find Python...
+echo [1/7] Find Python...
 set PYTHON=
 
 for /f "tokens=*" %%i in ('where python 2^>nul') do (
@@ -39,7 +39,7 @@ echo Using: %PYTHON%
 %PYTHON% --version
 
 echo.
-echo [2/6] Check venv...
+echo [2/7] Check venv...
 if not exist "venv\Scripts\python.exe" (
     echo Creating venv...
     %PYTHON% -m venv venv
@@ -60,10 +60,10 @@ set VENV_PYTHON="%~dp0venv\Scripts\python.exe"
 set VENV_PYINSTALLER="%~dp0venv\Scripts\pyinstaller.exe"
 
 echo.
-echo [3/6] Install dependencies...
+echo [3/7] Install dependencies...
 if "%NEED_INSTALL%"=="1" (
     echo Installing packages...
-    %VENV_PIP% install flask flask-cors pyautogui pyperclip pygetwindow pywin32 pystray Pillow
+    %VENV_PIP% install flask flask-cors flask-sock pyautogui pyperclip pygetwindow pywin32 pystray Pillow
     if errorlevel 1 (
         echo ERROR: Install packages failed
         pause
@@ -82,7 +82,7 @@ if "%NEED_INSTALL%"=="1" (
 )
 
 echo.
-echo [4/6] Test imports...
+echo [4/7] Test imports...
 %VENV_PYTHON% -c "import pystray; import PIL; import flask; import pyautogui; print('OK')"
 if errorlevel 1 (
     echo ERROR: Import test failed
@@ -92,7 +92,7 @@ if errorlevel 1 (
 echo Import test passed
 
 echo.
-echo [5/6] Build server.exe (temp, will be embedded)...
+echo [5/7] Build server.exe (temp, will be embedded)...
 echo.
 %VENV_PYINSTALLER% --clean --noconfirm build.spec
 if errorlevel 1 (
@@ -104,7 +104,19 @@ if errorlevel 1 (
 echo server.exe built
 
 echo.
-echo [6/6] Build qingqingHelper.exe (installer)...
+echo [6/7] Build uninstall.exe (temp, will be embedded)...
+echo.
+%VENV_PYINSTALLER% --clean --noconfirm uninstaller.spec
+if errorlevel 1 (
+    echo.
+    echo ERROR: Build uninstall.exe failed
+    pause
+    exit /b 1
+)
+echo uninstall.exe built
+
+echo.
+echo [7/7] Build qingqingHelper.exe (installer, embeds server + uninstall + extensions)...
 echo.
 %VENV_PYINSTALLER% --clean --noconfirm installer.spec
 if errorlevel 1 (
@@ -113,10 +125,12 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+echo qingqingHelper.exe built
 
 echo.
-echo Cleaning up...
+echo Cleaning up temp files...
 del /f /q "dist\server.exe" 2>nul
+del /f /q "dist\uninstall.exe" 2>nul
 
 echo.
 echo ========================================

@@ -80,7 +80,7 @@ def select_install_directory():
 
                 # 读取上次安装目录
                 last_install_dir = self._load_last_install_dir()
-                self.install_dir = tk.StringVar(value=last_install_dir or r"C:\Program Files (x86)")
+                self.install_dir = tk.StringVar(value=last_install_dir or str(Path.home() / "AppData" / "Local" / "QingQingHelper"))
                 
                 self.current_page = 0
                 self.pages = []
@@ -97,30 +97,32 @@ def select_install_directory():
 
             def _load_last_install_dir(self):
                 """读取上次安装目录"""
+                # 1. 优先检查环境变量
+                env_path = os.environ.get('QINGQINGHELPER_HOME')
+                if env_path and Path(env_path).exists():
+                    logger.info(f"[安装器] 从环境变量读取安装目录: {env_path}")
+                    return env_path
+                
                 exe_dir = get_exe_location()
                 
+                # 2. 检查 config.json
                 for cfg_path in [exe_dir / "config.json", exe_dir.parent / "config.json"]:
                     if cfg_path.exists():
                         try:
                             with open(cfg_path, 'r', encoding='utf-8') as f:
                                 config = json.load(f)
-                            if 'install_dir' in config:
-                                return config['install_dir']
                             if 'app_dir' in config:
-                                return str(Path(config['app_dir']).parent)
+                                logger.info(f"[安装器] 从 config.json 读取安装目录: {config['app_dir']}")
+                                return config['app_dir']
+                            if 'install_dir' in config:
+                                # install_dir 是父目录，拼接项目名
+                                install_path = str(Path(config['install_dir']) / APP_DIR_NAME)
+                                logger.info(f"[安装器] 从 config.json 读取安装目录: {install_path}")
+                                return install_path
                         except:
                             pass
                 
-                for txt_path in [exe_dir / "install_path.txt", exe_dir.parent / "install_path.txt"]:
-                    if txt_path.exists():
-                        try:
-                            with open(txt_path, 'r', encoding='utf-8') as f:
-                                path = f.read().strip()
-                            if path and Path(path).exists():
-                                return path
-                        except:
-                            pass
-                
+                logger.info("[安装器] 未找到已安装目录，使用默认目录")
                 return None
 
             def create_pages(self):
@@ -178,7 +180,7 @@ def select_install_directory():
                 page = tk.Frame(self.root)
                 self._pack_buttons(page, [("取消", self.cancel), ("< 上一步", self.prev_page), ("下一步 >", self.next_page)])
                 tk.Label(page, text="选择安装位置", font=("Microsoft YaHei", 14, "bold")).pack(pady=(20, 2))
-                tk.Label(page, text=f"选择软件的安装目录，将在此目录下创建 {APP_DIR_NAME} 文件夹",
+                tk.Label(page, text="选择软件的安装目录：",
                          font=("Microsoft YaHei", 10), fg="gray").pack(pady=(0, 8))
                 row = tk.Frame(page)
                 row.pack(padx=30, fill="x")
@@ -258,7 +260,7 @@ def select_install_directory():
                 self.root.destroy()
 
             def finish(self):
-                result['install_dir'] = Path(self.install_dir.get()) / APP_DIR_NAME
+                result['install_dir'] = Path(self.install_dir.get())
                 # 启动服务
                 exe_path = result['install_dir'] / "bin" / "qingqingHelper.exe"
                 if exe_path.exists():
@@ -275,7 +277,7 @@ def select_install_directory():
                     self.install_dir.set(d)
 
             def update_dir_preview(self, *_):
-                p = Path(self.install_dir.get()) / APP_DIR_NAME
+                p = Path(self.install_dir.get())
                 self.dir_preview.config(text=(
                     f"{p}/\n"
                     "├── bin/\n"
@@ -284,7 +286,8 @@ def select_install_directory():
                     "│   └── YYYYMMDD/\n"
                     "├── logs/\n"
                     "├── data/\n"
-                    "├── chrome-extension/\n"
+                    f"├── extensions{sep}\n"
+                    f"│   └── qingqingHelper{sep}\n"
                     "├── config.json\n"
                     "└── start.bat"
                 ))
@@ -311,9 +314,55 @@ def select_install_directory():
                 self.log_text.see("end")
                 self.root.update()
 
-            def do_install(self):
-                install_path = Path(self.install_dir.get()) / APP_DIR_NAME
+            def check_write_permission(self, path):
+                """检查是否有写入权限"""
                 try:
+                    path.mkdir(parents=True, exist_ok=True)
+                    test_file = path / ".permission_test"
+                    test_file.write_text("test", encoding='utf-8')
+                    test_file.unlink()
+                    return True
+                except Exception:
+                    return False
+
+            def request_admin(self):
+                """请求管理员权限重新运行"""
+                try:
+                    import ctypes
+                    exe = sys.executable
+                    ret = ctypes.windll.shell32.ShellExecuteW(
+                        None, "runas", exe, "", None, 1
+                    )
+                    return ret > 32
+                except Exception:
+                    return False
+
+            def do_install(self):
+                install_path = Path(self.install_dir.get())
+                try:
+                    # 检测写入权限
+                    self.log("检查安装目录权限...")
+                    self.install_status.config(text="检查权限...")
+                    
+                    if not self.check_write_permission(install_path):
+                        self.log(f"! 没有写入权限: {install_path}")
+                        self.log("尝试请求管理员权限...")
+                        
+                        if self.request_admin():
+                            self.log("已请求管理员权限，当前安装器将关闭")
+                            self.root.after(1500, self.root.destroy)
+                            return
+                        else:
+                            self.log("! 无法获取管理员权限")
+                            messagebox.showerror("权限不足", 
+                                f"没有写入权限:\n{install_path}\n\n"
+                                "请以管理员身份运行，或选择其他目录。\n\n"
+                                "建议:\n- D:\\QingQingHelper\n- C:\\Users\\{用户名}\\AppData\\Local\\QingQingHelper")
+                            self.install_status.config(text="权限不足，请选择其他目录")
+                            return
+
+                    self.log("✓ 权限检查通过")
+
                     # 检测并关闭已运行的服务（通过端口检测，避免杀掉安装器自己）
                     self.log("检查已运行的服务...")
                     self.install_status.config(text="检查已运行的服务...")
@@ -359,13 +408,14 @@ def select_install_directory():
                     self.progress['value'] = 30
                     self.root.update()
 
-                    exe_source = get_exe_dir() / "chrome-extension"
+                    exe_source = get_exe_dir() / "extensions" / "qingqingHelper"
                     if not exe_source.exists():
-                        exe_source = get_exe_location().parent / "chrome-extension"
-                    ext_dest = install_path / "chrome-extension"
+                        exe_source = get_exe_location().parent / "extensions" / "qingqingHelper"
+                    ext_dest = install_path / "extensions" / "qingqingHelper"
                     if exe_source.exists():
                         if ext_dest.exists():
                             shutil.rmtree(str(ext_dest))
+                        ext_dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copytree(str(exe_source), str(ext_dest))
                         self.log("✓ Chrome扩展已复制")
                     else:
@@ -391,8 +441,46 @@ def select_install_directory():
                             json.dump(config, f, indent=2, ensure_ascii=False)
                     self.log("✓ 配置文件已保存")
 
+                    # 设置环境变量 QINGQINGHELPER_HOME（用户级别 + 当前进程）
+                    try:
+                        import winreg
+                        key = winreg.OpenKey(
+                            winreg.HKEY_CURRENT_USER,
+                            r"Environment",
+                            0,
+                            winreg.KEY_SET_VALUE
+                        )
+                        winreg.SetValueEx(key, "QINGQINGHELPER_HOME", 0, winreg.REG_SZ, str(install_path))
+                        winreg.CloseKey(key)
+                        # 立即更新当前进程的环境变量
+                        os.environ['QINGQINGHELPER_HOME'] = str(install_path)
+                        self.log(f"✓ 环境变量已设置: QINGQINGHELPER_HOME={install_path}")
+                        
+                        # 广播环境变量变更消息，让所有进程刷新
+                        try:
+                            import ctypes
+                            HWND_BROADCAST = 0xFFFF
+                            WM_SETTINGCHANGE = 0x001A
+                            SMTO_ABORTIFHUNG = 0x0002
+                            result = ctypes.c_long()
+                            ctypes.windll.user32.SendMessageTimeoutW(
+                                HWND_BROADCAST, WM_SETTINGCHANGE, 0, 
+                                "Environment", SMTO_ABORTIFHUNG, 5000, 
+                                ctypes.byref(result)
+                            )
+                            self.log("✓ 环境变量已刷新")
+                        except Exception as e:
+                            self.log(f"! 刷新环境变量失败: {e}（不影响使用）")
+                    except Exception as e:
+                        self.log(f"! 设置环境变量失败: {e}（不影响使用）")
+
                     self.progress['value'] = 80
                     self.root.update()
+
+                    # 注册自定义协议 qqhelpr://（指向 start.bat）
+                    self.log("\n注册自定义协议...")
+                    self.install_status.config(text="注册自定义协议...")
+                    self._register_protocol(str(install_path))
 
                     bat = install_path / "start.bat"
                     with open(bat, 'w', encoding='utf-8') as f:
@@ -412,13 +500,37 @@ def select_install_directory():
                     self.log(f"\n错误: {e}")
                     self.install_status.config(text="安装失败!")
 
+            def _register_protocol(self, install_path):
+                """注册自定义协议 qqhelpr://，指向 start.bat"""
+                try:
+                    import winreg
+                    bat_path = str(Path(install_path) / "start.bat")
+
+                    if not Path(bat_path).exists():
+                        self.log(f"! 启动脚本不存在: {bat_path}，跳过协议注册")
+                        return False
+
+                    key = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, "qqhelpr")
+                    winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:QQHelpr Protocol")
+                    winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
+                    winreg.CloseKey(key)
+                    cmd_key = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, r"qqhelpr\shell\open\command")
+                    winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ,
+                                      f'"{bat_path}" "%1"')
+                    winreg.CloseKey(cmd_key)
+                    self.log(f"✓ 自定义协议已注册: qqhelpr:// -> {bat_path}")
+                    return True
+                except Exception as e:
+                    self.log(f"! 注册自定义协议失败: {e}（不影响使用）")
+                    return False
+
             def _goto_complete(self):
                 self.show_complete_info()
                 self.current_page = 4
                 self.show_page(4)
 
             def show_complete_info(self):
-                p = Path(self.install_dir.get()) / APP_DIR_NAME
+                p = Path(self.install_dir.get())
                 self.complete_info.config(text=f"已成功安装到:\n{p}")
 
         # 运行安装向导
@@ -543,10 +655,16 @@ except ImportError:
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_sock import Sock
 
 # Flask应用
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
+
+# WebSocket 客户端管理
+ws_clients = set()
+ws_pending_click = {}  # 待确认的点击请求
 
 # 全局状态
 server_running = False
@@ -952,6 +1070,152 @@ def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height,
     else:
         logger.warning(f"[上传] 对话框未出现")
         return False
+
+# ==================== WebSocket ====================
+
+import json as json_module
+
+@sock.route('/ws')
+def websocket_handler(ws):
+    """WebSocket 连接处理"""
+    ws_clients.add(ws)
+    logger.info(f"[WS] 客户端连接，当前连接数: {len(ws_clients)}")
+    
+    # 心跳相关
+    last_pong = time.time()
+    HEARTBEAT_INTERVAL = 30  # 秒
+    
+    try:
+        while True:
+            # 接收消息，设置超时以便发送心跳
+            try:
+                data = ws.receive(timeout=HEARTBEAT_INTERVAL)
+                if data is None:
+                    # 超时，发送 ping
+                    current_time = time.time()
+                    if current_time - last_pong > HEARTBEAT_INTERVAL * 2:
+                        logger.warning("[WS] 心跳超时，断开连接")
+                        break
+                    try:
+                        ws.send(json_module.dumps({'type': 'ping', 'timestamp': int(current_time)}))
+                    except:
+                        break
+                    continue
+                
+                # 收到消息，处理
+                message = json_module.loads(data)
+                msg_type = message.get('type', '')
+                
+                if msg_type == 'pong':
+                    last_pong = time.time()
+                    continue
+                
+                if msg_type == 'ping':
+                    ws.send(json_module.dumps({'type': 'pong', 'timestamp': int(time.time())}))
+                    continue
+                
+                # 处理点击确认请求
+                if msg_type == 'confirm-hover':
+                    request_id = message.get('request_id', '')
+                    confirmed = message.get('confirmed', False)
+                    corrected_x = message.get('corrected_x')
+                    corrected_y = message.get('corrected_y')
+                    
+                    if request_id in ws_pending_click:
+                        ws_pending_click[request_id] = {
+                            'confirmed': confirmed,
+                            'corrected_x': corrected_x,
+                            'corrected_y': corrected_y,
+                            'timestamp': time.time()
+                        }
+                        logger.info(f"[WS] 收到点击确认: request_id={request_id}, confirmed={confirmed}")
+                    
+                    continue
+                
+                # 其他消息类型
+                logger.info(f"[WS] 收到消息: {msg_type}")
+                
+            except Exception as e:
+                if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+                    # 超时，发送 ping
+                    current_time = time.time()
+                    if current_time - last_pong > HEARTBEAT_INTERVAL * 2:
+                        logger.warning("[WS] 心跳超时，断开连接")
+                        break
+                    try:
+                        ws.send(json_module.dumps({'type': 'ping', 'timestamp': int(current_time)}))
+                    except:
+                        break
+                    continue
+                raise
+                
+    except Exception as e:
+        logger.error(f"[WS] 连接异常: {e}")
+    finally:
+        ws_clients.discard(ws)
+        logger.info(f"[WS] 客户端断开，当前连接数: {len(ws_clients)}")
+
+def ws_send_and_wait(message, wait_for_type=None, timeout=10.0):
+    """向所有 WebSocket 客户端发送消息，可选等待特定类型的响应"""
+    if not ws_clients:
+        logger.warning("[WS] 没有连接的客户端")
+        return None
+    
+    data = json_module.dumps(message)
+    dead_clients = set()
+    
+    for ws in ws_clients:
+        try:
+            ws.send(data)
+        except Exception as e:
+            logger.error(f"[WS] 发送失败: {e}")
+            dead_clients.add(ws)
+    
+    # 清理断开的客户端
+    ws_clients.difference_update(dead_clients)
+    
+    if not wait_for_type or not ws_clients:
+        return None
+    
+    # 等待响应
+    deadline = time.time() + timeout
+    request_id = message.get('request_id', '')
+    
+    while time.time() < deadline:
+        # 检查是否有待处理的响应
+        if request_id and request_id in ws_pending_click:
+            result = ws_pending_click.pop(request_id)
+            return result
+        
+        time.sleep(0.1)
+    
+    logger.warning(f"[WS] 等待响应超时: {wait_for_type}")
+    return None
+
+def ws_prepare_click(viewport_x, viewport_y, nav_bar_height, element_info=None):
+    """通知扩展准备点击，等待 hover 确认"""
+    import uuid
+    request_id = str(uuid.uuid4())[:8]
+    
+    message = {
+        'type': 'prepare-click',
+        'request_id': request_id,
+        'viewport_x': viewport_x,
+        'viewport_y': viewport_y,
+        'nav_bar_height': nav_bar_height,
+        'element_info': element_info or {}
+    }
+    
+    # 初始化待处理请求
+    ws_pending_click[request_id] = None
+    
+    # 发送消息
+    result = ws_send_and_wait(message, wait_for_type='confirm-hover', timeout=10.0)
+    
+    # 清理
+    ws_pending_click.pop(request_id, None)
+    
+    return result
 
 # ==================== Flask路由 ====================
 

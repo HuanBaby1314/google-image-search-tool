@@ -189,12 +189,13 @@ MSN等网站的图片URL可能是 `.img` 格式，但实际下载后是 `.jpg`/`
 ```
 google-image-search-tool/
 ├── README.md
-├── chrome-extension/
-│   ├── manifest.json          # 扩展配置
-│   ├── background.js          # 后台服务（心跳、搜图流程）
-│   ├── popup.html             # 弹出界面
-│   ├── popup.js               # 界面逻辑
-│   └── icons/                 # 扩展图标
+├── extensions/
+│   └── qingqingHelper/
+│       ├── manifest.json          # 扩展配置
+│       ├── background.js          # 后台服务（心跳、搜图流程）
+│       ├── popup.html             # 弹出界面
+│       ├── popup.js               # 界面逻辑
+│       └── icons/                 # 扩展图标
 └── local-server/
     ├── server.py              # Flask服务器（开发用）
     ├── tray_service.py        # 系统托盘程序（打包用）

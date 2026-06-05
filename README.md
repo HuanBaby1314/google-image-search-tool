@@ -33,7 +33,7 @@
 3. 访问 `chrome://extensions/` 或 `edge://extensions/`
 4. 开启"开发者模式"
 5. 点击"加载已解压的扩展程序"
-6. 选择 `chrome-extension` 文件夹
+6. 选择 `extensions/qingqingHelper` 文件夹
 
 ### 2. 启动本地服务
 
@@ -95,12 +95,13 @@ python server.py
 
 ```
 google-image-search-tool/
-├── chrome-extension/          # Chrome扩展
-│   ├── manifest.json          # 扩展配置
-│   ├── background.js          # 后台服务（心跳、搜图流程）
-│   ├── popup.html             # 弹出界面
-│   ├── popup.js               # 界面逻辑
-│   └── icons/                 # 扩展图标
+├── extensions/
+│   └── qingqingHelper/        # Chrome扩展
+│       ├── manifest.json          # 扩展配置
+│       ├── background.js          # 后台服务（心跳、搜图流程）
+│       ├── popup.html             # 弹出界面
+│       ├── popup.js               # 界面逻辑
+│       └── icons/                 # 扩展图标
 ├── local-server/              # 本地服务器
 │   ├── server.py              # Flask服务器（开发用）
 │   ├── tray_service.py        # 系统托盘程序（打包用）

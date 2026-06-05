@@ -319,6 +319,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('clearImagesBtn').addEventListener('click', clearImages);
   document.getElementById('downloadBtn').addEventListener('click', downloadSelected);
   document.getElementById('searchBtn').addEventListener('click', startGoogleSearch);
+  document.getElementById('amazonSearchBtn').addEventListener('click', startAmazonSearch);
   document.getElementById('selectAll').addEventListener('change', toggleSelectAll);
   document.getElementById('clearDownloadBtn').addEventListener('click', clearDownloadedFiles);
   
@@ -353,13 +354,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         : `全部 ${message.successCount} 张图片搜图完成!`;
       showToast(msg, message.failCount > 0 ? 'info' : 'success');
       updateButtons();
+      // 恢复按钮文本
+      document.getElementById('searchBtn').textContent = 'Google搜图';
+      document.getElementById('amazonSearchBtn').textContent = 'Amazon搜图';
     }
     if (message.type === 'searchError') {
       isSearching = false;
       showToast('搜图失败: ' + message.error, 'error');
       updateButtons();
+      // 恢复按钮文本
+      document.getElementById('searchBtn').textContent = 'Google搜图';
+      document.getElementById('amazonSearchBtn').textContent = 'Amazon搜图';
     }
   });
+
+  // 状态指示器点击启动服务
+  document.getElementById('serverStatusMini').addEventListener('click', onStatusClick);
 
   startStatusListener();
   restoreState();
@@ -501,18 +511,34 @@ function updateStatusUI(status) {
   const dot = document.getElementById('statusDot');
   const label = document.getElementById('statusLabel');
   const footer = document.getElementById('status');
+  const statusMini = document.getElementById('serverStatusMini');
 
   if (status.online) {
     dot.className = 'status-dot online';
     label.textContent = '在线';
     footer.textContent = '服务在线';
     footer.className = 'status success';
+    statusMini.classList.remove('clickable');
+    statusMini.title = '';
   } else {
     dot.className = 'status-dot offline';
     label.textContent = '离线';
-    footer.textContent = '服务离线 - 请启动本地服务器';
+    footer.textContent = '服务离线 - 点击状态栏启动服务';
     footer.className = 'status error';
+    statusMini.classList.add('clickable');
+    statusMini.title = '点击启动本地服务';
   }
+}
+
+// 离线状态点击：通过自定义协议启动服务
+function onStatusClick() {
+  if (serverOnline) return;
+
+  showToast('正在启动本地服务...', 'info');
+
+  // 用新 tab 触发协议，避免确认弹窗被 popup 遮挡
+  // 服务上线后 WebSocket 会自动重连，状态会实时更新
+  chrome.tabs.create({ url: 'qqhelpr://start', active: true });
 }
 
 // ==================== 扫描图片 ====================
@@ -782,6 +808,9 @@ function updateButtons() {
   
   // 搜图按钮 - 有选中图片且服务器在线时可用
   document.getElementById('searchBtn').disabled = !hasSelection || !serverOnline || isSearching;
+  
+  // Amazon搜图按钮 - 有选中图片且服务器在线时可用
+  document.getElementById('amazonSearchBtn').disabled = !hasSelection || !serverOnline || isSearching;
 }
 
 function getSelectedImages() {
@@ -932,6 +961,67 @@ async function startGoogleSearch() {
 
   chrome.runtime.sendMessage({
     action: 'startGoogleSearch',
+    images: selected.map(img => ({
+      filename: img.filename,
+      isLocal: img.source === 'local'
+    }))
+  });
+}
+
+// ==================== Amazon搜图 ====================
+
+async function startAmazonSearch() {
+  const selected = getSelectedImages();
+  if (selected.length === 0) {
+    showToast('请先选择图片', 'error');
+    return;
+  }
+
+  if (!serverOnline) {
+    showToast('服务器未连接，请先启动本地服务器', 'error');
+    return;
+  }
+
+  if (isSearching) {
+    showToast('正在处理中，请等待...', 'info');
+    return;
+  }
+
+  isSearching = true;
+  const btn = document.getElementById('amazonSearchBtn');
+  btn.disabled = true;
+  btn.textContent = '处理中...';
+  
+  // 先下载未下载的图片
+  const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
+  
+  if (toDownload.length > 0) {
+    showToast(`正在下载 ${toDownload.length} 张图片...`, 'info');
+    
+    for (const img of toDownload) {
+      try {
+        const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
+        const downloadId = await chrome.downloads.download({
+          url: img.src,
+          filename: downloadPath,
+          saveAs: false
+        });
+        await waitForDownload(downloadId);
+        downloadedFiles.push({ filename: img.filename, url: img.src });
+      } catch (error) {
+        console.error('下载失败:', img.src, error);
+      }
+    }
+    
+    await saveState();
+    updateDownloadCount();
+    renderImageList();
+  }
+  
+  showToast('开始Amazon搜图流程...', 'info');
+
+  chrome.runtime.sendMessage({
+    action: 'startAmazonSearch',
     images: selected.map(img => ({
       filename: img.filename,
       isLocal: img.source === 'local'

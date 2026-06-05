@@ -15,6 +15,7 @@ from threading import Thread
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_sock import Sock
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
+
+# WebSocket 客户端管理
+ws_clients = set()
+ws_pending_click = {}  # 待确认的点击请求
 
 # 导入依赖
 try:
@@ -408,8 +414,138 @@ def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height,
             return False
     else:
         logger.warning(f"[上传] 对话框未出现")
-        return False
 
+
+
+# ==================== WebSocket ====================
+
+import json as json_module
+
+@sock.route('/ws')
+def websocket_handler(ws):
+    """WebSocket 连接处理"""
+    ws_clients.add(ws)
+    logger.info(f"[WS] 客户端连接，当前连接数: {len(ws_clients)}")
+    
+    last_pong = time.time()
+    HEARTBEAT_INTERVAL = 30
+    
+    try:
+        while True:
+            try:
+                data = ws.receive(timeout=HEARTBEAT_INTERVAL)
+                if data is None:
+                    current_time = time.time()
+                    if current_time - last_pong > HEARTBEAT_INTERVAL * 2:
+                        logger.warning("[WS] 心跳超时，断开连接")
+                        break
+                    try:
+                        ws.send(json_module.dumps({'type': 'ping', 'timestamp': int(current_time)}))
+                    except:
+                        break
+                    continue
+                
+                message = json_module.loads(data)
+                msg_type = message.get('type', '')
+                
+                if msg_type == 'pong':
+                    last_pong = time.time()
+                    continue
+                
+                if msg_type == 'ping':
+                    ws.send(json_module.dumps({'type': 'pong', 'timestamp': int(time.time())}))
+                    continue
+                
+                if msg_type == 'confirm-hover':
+                    request_id = message.get('request_id', '')
+                    confirmed = message.get('confirmed', False)
+                    corrected_x = message.get('corrected_x')
+                    corrected_y = message.get('corrected_y')
+                    
+                    if request_id in ws_pending_click:
+                        ws_pending_click[request_id] = {
+                            'confirmed': confirmed,
+                            'corrected_x': corrected_x,
+                            'corrected_y': corrected_y,
+                            'timestamp': time.time()
+                        }
+                        logger.info(f"[WS] 收到点击确认: request_id={request_id}, confirmed={confirmed}")
+                    
+                    continue
+                
+                logger.info(f"[WS] 收到消息: {msg_type}")
+                
+            except Exception as e:
+                if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
+                    current_time = time.time()
+                    if current_time - last_pong > HEARTBEAT_INTERVAL * 2:
+                        logger.warning("[WS] 心跳超时，断开连接")
+                        break
+                    try:
+                        ws.send(json_module.dumps({'type': 'ping', 'timestamp': int(current_time)}))
+                    except:
+                        break
+                    continue
+                raise
+                
+    except Exception as e:
+        logger.error(f"[WS] 连接异常: {e}")
+    finally:
+        ws_clients.discard(ws)
+        logger.info(f"[WS] 客户端断开，当前连接数: {len(ws_clients)}")
+
+def ws_send_and_wait(message, wait_for_type=None, timeout=10.0):
+    """向所有 WebSocket 客户端发送消息，可选等待特定类型的响应"""
+    if not ws_clients:
+        logger.warning("[WS] 没有连接的客户端")
+        return None
+    
+    data = json_module.dumps(message)
+    dead_clients = set()
+    
+    for ws in ws_clients:
+        try:
+            ws.send(data)
+        except Exception as e:
+            logger.error(f"[WS] 发送失败: {e}")
+            dead_clients.add(ws)
+    
+    ws_clients.difference_update(dead_clients)
+    
+    if not wait_for_type or not ws_clients:
+        return None
+    
+    deadline = time.time() + timeout
+    request_id = message.get('request_id', '')
+    
+    while time.time() < deadline:
+        if request_id and request_id in ws_pending_click:
+            result = ws_pending_click.pop(request_id)
+            return result
+        time.sleep(0.1)
+    
+    logger.warning(f"[WS] 等待响应超时: {wait_for_type}")
+    return None
+
+def ws_prepare_click(viewport_x, viewport_y, nav_bar_height, element_info=None):
+    """通知扩展准备点击，等待 hover 确认"""
+    import uuid
+    request_id = str(uuid.uuid4())[:8]
+    
+    message = {
+        'type': 'prepare-click',
+        'request_id': request_id,
+        'viewport_x': viewport_x,
+        'viewport_y': viewport_y,
+        'nav_bar_height': nav_bar_height,
+        'element_info': element_info or {}
+    }
+    
+    ws_pending_click[request_id] = None
+    result = ws_send_and_wait(message, wait_for_type='confirm-hover', timeout=10.0)
+    ws_pending_click.pop(request_id, None)
+    
+    return result
 
 # ==================== Flask路由 ====================
 

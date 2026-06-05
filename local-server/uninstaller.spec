@@ -1,29 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller config - Console version (debug)
+# PyInstaller config - Uninstaller
 
 import sys
 from pathlib import Path
 
 block_cipher = None
 
-# 获取 extensions/qingqingHelper 目录路径（在项目根目录）
-chrome_ext_dir = Path('../extensions/qingqingHelper').absolute()
-
 a = Analysis(
-    ['tray_service.py'],
+    ['uninstaller.py'],
     pathex=[],
     binaries=[],
-    datas=[(str(chrome_ext_dir), 'extensions/qingqingHelper')],
+    datas=[],
     hiddenimports=[
-        'pystray._win32',
-        'PIL._tkinter_finder',
-        'flask',
-        'flask_cors',
-        'pyautogui',
-        'pyperclip',
-        'win32gui',
-        'win32con',
-        'win32com.client',
+        'tkinter',
+        'tkinter.ttk',
+        'tkinter.messagebox',
     ],
     hookspath=[],
     hooksconfig={},
@@ -37,21 +28,21 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
+uninstaller_exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
     a.zipfiles,
     a.datas,
     [],
-    name='GoogleImageSearch_Debug',
-    debug=True,
+    name='uninstall',
+    debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

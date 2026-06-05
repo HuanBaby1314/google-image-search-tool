@@ -6,14 +6,14 @@ from pathlib import Path
 
 block_cipher = None
 
-# 获取 chrome-extension 目录路径（在项目根目录）
-chrome_ext_dir = Path('../chrome-extension').absolute()
+# 获取 extensions/qingqingHelper 目录路径（在项目根目录）
+chrome_ext_dir = Path('../extensions/qingqingHelper').absolute()
 
 a = Analysis(
     ['tray_service.py'],
     pathex=[],
     binaries=[],
-    datas=[(str(chrome_ext_dir), 'chrome-extension')],
+    datas=[(str(chrome_ext_dir), 'extensions/qingqingHelper')],
     hiddenimports=[
         'pystray._win32',
         'PIL._tkinter_finder',
