@@ -173,12 +173,15 @@ A: 确保浏览器窗口没有被遮挡，且不是全屏模式。
 如果这个项目对你有帮助，欢迎请我喝杯咖啡 ☕
 
 <div align="center">
-<table>
-<tr>
-<td align="center"><img src="https://private-user-images.githubusercontent.com/28698252/590677712-95175d2a-7887-478b-aa5b-1ff3e9b33b7d.png?jwt=***" width="45%"/><br><b>支付宝</b></td>
-<td align="center"><img src="https://private-user-images.githubusercontent.com/28698252/590673265-10e6c704-7b78-4c2a-acd1-59f76ed99daa.jpg?jwt=***" width="45%"/><br><b>微信</b></td>
-</tr>
-</table>
+
+**支付宝**
+
+![支付宝](https://private-user-images.githubusercontent.com/28698252/590677712-95175d2a-7887-478b-aa5b-1ff3e9b33b7d.png?jwt=***
+
+**微信**
+
+![微信](https://private-user-images.githubusercontent.com/28698252/590673265-10e6c704-7b78-4c2a-acd1-59f76ed99daa.jpg?jwt=***
+
 </div>
 
 ## 开源协议
