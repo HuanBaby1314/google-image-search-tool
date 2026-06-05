@@ -173,15 +173,12 @@ A: 确保浏览器窗口没有被遮挡，且不是全屏模式。
 如果这个项目对你有帮助，欢迎请我喝杯咖啡 ☕
 
 <div align="center">
-
-**支付宝**
-
-![支付宝](https://private-user-images.githubusercontent.com/28698252/590677712-95175d2a-7887-478b-aa5b-1ff3e9b33b7d.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3ODA1Nzk1MDUsIm5iZiI6MTc4MDU3OTIwNSwicGF0aCI6Ii8yODY5ODI1Mi81OTA2Nzc3MTItOTUxNzVkMmEtNzg4Ny00NzhiLWFhNWItMWZmM2U5YjMzYjdkLnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNjA2MDQlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYwNjA0VDEzMjAwNVomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTA1YjdmMTBkZWI2NzRmN2Y1NzY3MTk0YmMwYTQ3YjcwNjg0ZDcwMjg5YzYyOTNkMmUyYTdjZWIyMzhhNTk1YjEmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JnJlc3BvbnNlLWNvbnRlbnQtdHlwZT1pbWFnZSUyRnBuZyJ9.ZrvNbeqdI6lmo5AbQCOcBSYXPLRz-7Wv-tuveX5WArs)
-
-**微信**
-
-![微信](https://private-user-images.githubusercontent.com/28698252/590673265-10e6c704-7b78-4c2a-acd1-59f76ed99daa.jpg?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3ODA1Nzk1MDUsIm5iZiI6MTc4MDU3OTIwNSwicGF0aCI6Ii8yODY5ODI1Mi81OTA2NzMyNjUtMTBlNmM3MDQtN2I3OC00YzJhLWFjZDEtNTlmNzZlZDk5ZGFhLmpwZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNjA2MDQlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYwNjA0VDEzMjAwNVomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTA4NGE3NmY3NjBjNDhhNzgyYTk1YmQwNGYxYzM3Yzc1MTQyY2I1ZDQ4OTRjYTU3MjYxN2ZkY2YwNDg2YzM4NGYmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JnJlc3BvbnNlLWNvbnRlbnQtdHlwZT1pbWFnZSUyRmpwZWcifQ.3UYEbce5aVJb7Xh46dgAN0Hpabbx3k41o95z4C29cV0)
-
+<table>
+<tr>
+<td align="center"><img src="https://private-user-images.githubusercontent.com/28698252/590677712-95175d2a-7887-478b-aa5b-1ff3e9b33b7d.png?jwt=***" width="45%"/><br><b>支付宝</b></td>
+<td align="center"><img src="https://private-user-images.githubusercontent.com/28698252/590673265-10e6c704-7b78-4c2a-acd1-59f76ed99daa.jpg?jwt=***" width="45%"/><br><b>微信</b></td>
+</tr>
+</table>
 </div>
 
 ## 开源协议
