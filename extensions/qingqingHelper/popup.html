@@ -1,847 +1,1408 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html>
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Google Image Search Tool</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    html, body {
-      width: 400px;
-      height: 480px;
-      overflow: hidden;
-    }
-
-    body {
-      font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-      background: #f5f5f5;
-      color: #333;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .header {
-      background: linear-gradient(135deg, #4285f4, #34a853);
-      color: white;
-      padding: 10px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-shrink: 0;
-      z-index: 10;
-    }
-
-    .header h1 {
-      font-size: 14px;
-      font-weight: 500;
-    }
-
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .server-status-mini {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 11px;
-      color: rgba(255,255,255,0.9);
-      cursor: default;
-      padding: 2px 6px;
-      border-radius: 4px;
-      transition: background 0.2s;
-    }
-
-    .server-status-mini.clickable {
-      cursor: pointer;
-    }
-
-    .server-status-mini.clickable:hover {
-      background: rgba(255,255,255,0.2);
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-    }
-
-    .status-dot.online {
-      background: #4caf50;
-      box-shadow: 0 0 4px rgba(76, 175, 80, 0.6);
-    }
-
-    .status-dot.offline {
-      background: #f44336;
-    }
-
-    .status-dot.checking {
-      background: #ff9800;
-      animation: blink 1s infinite;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
-
-    .icon-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.2s;
-    }
-
-    .icon-btn:hover {
-      background: rgba(255,255,255,0.2);
-    }
-
-    .icon-btn svg {
-      width: 18px;
-      height: 18px;
-      fill: white;
-    }
-
-    .icon-btn.active {
-      background: rgba(255,152,0,0.8);
-    }
-
-    .content {
-      flex: 1;
-      padding: 8px 10px;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }
-
-    .section {
-      background: white;
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      max-width: 100%;
-      overflow: visible;
-    }
-
-    .section-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-
-    .section-title {
-      font-size: 12px;
-      color: #666;
-      text-transform: uppercase;
-    }
-
-    .btn-group-small {
-      display: flex;
-      gap: 2px;
-    }
-
-    .btn-icon {
-      background: none;
-      border: 1px solid #e0e0e0;
-      cursor: pointer;
-      padding: 4px 6px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.2s;
-      position: relative;
-    }
-
-    .btn-icon:hover {
-      background: #f0f0f0;
-      border-color: #ccc;
-    }
-
-    .btn-icon:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-icon svg {
-      width: 14px;
-      height: 14px;
-      fill: #666;
-    }
-
-    .btn-icon .tooltip {
-      position: absolute;
-      top: calc(100% + 6px);
-      left: 50%;
-      transform: translateX(-50%);
-      background: #333;
-      color: white;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      white-space: nowrap;
-      opacity: 0;
-      visibility: hidden;
-      transition: all 0.2s;
-      z-index: 1000;
-      pointer-events: none;
-    }
-
-    .btn-icon .tooltip::before {
-      content: '';
-      position: absolute;
-      bottom: 100%;
-      left: 50%;
-      transform: translateX(-50%);
-      border: 4px solid transparent;
-      border-bottom-color: #333;
-    }
-
-    .btn-icon:hover .tooltip {
-      opacity: 1;
-      visibility: visible;
-    }
-
-    .image-list {
-      max-height: 200px;
-      overflow-y: auto;
-      overflow-x: hidden;
-      border: 1px solid #e0e0e0;
-      border-radius: 4px;
-      padding: 6px;
-      word-break: break-all;
-    }
-
-    .image-item {
-      display: flex;
-      align-items: center;
-      padding: 6px;
-      border-bottom: 1px solid #f0f0f0;
-    }
-
-    .image-item:last-child {
-      border-bottom: none;
-    }
-
-    .image-item input[type="checkbox"] {
-      margin-right: 8px;
-    }
-
-    .image-item .filename {
-      flex: 1;
-      font-size: 12px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .image-item .size {
-      font-size: 10px;
-      color: #999;
-      margin-left: 8px;
-    }
-
-    .image-item .status {
-      font-size: 10px;
-      margin-left: 6px;
-      padding: 2px 6px;
-      border-radius: 3px;
-    }
-
-    .image-item .status.downloaded {
-      background: #e8f5e9;
-      color: #2e7d32;
-    }
-
-    .image-item .status.pending {
-      background: #fff3e0;
-      color: #e65100;
-    }
-
-    .image-item .status.local {
-      background: #e3f2fd;
-      color: #1565c0;
-    }
-
-    .image-item .preview-trigger {
-      width: 24px;
-      height: 24px;
-      border-radius: 4px;
-      overflow: hidden;
-      cursor: pointer;
-      margin-left: 6px;
-      flex-shrink: 0;
-      border: 1px solid #e0e0e0;
-    }
-
-    .image-item .preview-trigger:hover {
-      border-color: #4285f4;
-    }
-
-    .image-item .preview-trigger img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .preview-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.85);
-      z-index: 10000;
-      display: none;
-      justify-content: center;
-      align-items: center;
-      flex-direction: column;
-    }
-
-    .preview-overlay .preview-container {
-      max-width: 90%;
-      max-height: 80vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .preview-overlay img {
-      max-width: 100%;
-      max-height: 70vh;
-      object-fit: contain;
-      border-radius: 8px;
-    }
-
-    .preview-overlay .preview-info {
-      color: white;
-      font-size: 13px;
-      margin-top: 12px;
-      background: rgba(0,0,0,0.5);
-      padding: 6px 12px;
-      border-radius: 4px;
-    }
-
-    .preview-overlay .preview-close {
-      position: absolute;
-      top: 15px;
-      right: 20px;
-      color: white;
-      font-size: 28px;
-      cursor: pointer;
-      background: rgba(0,0,0,0.5);
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .preview-overlay .preview-close:hover {
-      background: rgba(255,0,0,0.6);
-    }
-
-    .btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      padding: 8px;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .btn-google {
-      background: #fff;
-      color: #333;
-      border: 1px solid #ddd;
-    }
-
-    .btn-google:hover {
-      background: #f5f5f5;
-      border-color: #ccc;
-    }
-
-    .btn-google:disabled {
-      background: #f5f5f5;
-      color: #999;
-      border-color: #eee;
-      cursor: not-allowed;
-    }
-
-    .btn-amazon {
-      background: #fff;
-      color: #333;
-      border: 1px solid #ddd;
-      margin-top: 6px;
-    }
-
-    .btn-amazon:hover {
-      background: #f5f5f5;
-      border-color: #ccc;
-    }
-
-    .btn-amazon:disabled {
-      background: #f5f5f5;
-      color: #999;
-      border-color: #eee;
-      cursor: not-allowed;
-    }
-
-    .btn-amazon .dev-tag {
-      font-size: 10px;
-      background: #ff9800;
-      color: white;
-      padding: 2px 6px;
-      border-radius: 3px;
-      margin-left: 8px;
-    }
-
-    .select-all {
-      display: flex;
-      align-items: center;
-      padding: 6px;
-      background: #f9f9f9;
-      border-radius: 4px;
-      margin-bottom: 6px;
-    }
-
-    .select-all label {
-      font-size: 12px;
-      cursor: pointer;
-    }
-
-    .progress {
-      margin-top: 8px;
-    }
-
-    .progress-bar {
-      height: 4px;
-      background: #e0e0e0;
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      height: 100%;
-      background: #4285f4;
-      transition: width 0.3s;
-    }
-
-    .progress-text {
-      font-size: 11px;
-      color: #666;
-      text-align: center;
-      margin-top: 4px;
-    }
-
-    .download-status {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 12px;
-      color: #666;
-      margin-top: 6px;
-    }
-
-    .download-count {
-      font-weight: 500;
-      color: #4285f4;
-    }
-
-    .btn-danger-small {
-      background: #ff5252;
-      color: white;
-      border: none;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      cursor: pointer;
-    }
-
-    .btn-danger-small:hover {
-      background: #d32f2f;
-    }
-
-    .btn-danger-small:disabled {
-      background: #ccc;
-      cursor: not-allowed;
-    }
-
-    .footer {
-      background: white;
-      border-top: 1px solid #e0e0e0;
-      padding: 6px 10px;
-      font-size: 11px;
-      color: #666;
-      text-align: center;
-      flex-shrink: 0;
-      min-height: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .footer .status {
-      font-size: 11px;
-    }
-
-    .footer .status.success { color: #2e7d32; }
-    .footer .status.error { color: #c62828; }
-    .footer .status.info { color: #1565c0; }
-
-    .toast-container {
-      position: fixed;
-      top: 50px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      pointer-events: none;
-    }
-
-    .toast {
-      background: #333;
-      color: white;
-      padding: 8px 16px;
-      border-radius: 6px;
-      font-size: 12px;
-      opacity: 0;
-      transform: translateY(-10px);
-      animation: toastIn 0.3s ease forwards, toastOut 0.3s ease 4.5s forwards;
-      max-width: 300px;
-      text-align: center;
-    }
-
-    .toast.success { background: #4caf50; }
-    .toast.error { background: #f44336; }
-    .toast.info { background: #2196f3; }
-
-    @keyframes toastIn {
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes toastOut {
-      to { opacity: 0; transform: translateY(-10px); }
-    }
-
-    .debug-panel { display: none; }
-    .debug-panel.visible { display: block; }
-
-    .debug-steps { margin-bottom: 12px; }
-
-    .debug-step {
-      display: flex;
-      align-items: center;
-      padding: 8px;
-      margin-bottom: 4px;
-      background: #f5f5f5;
-      border-radius: 4px;
-      border-left: 3px solid #666;
-    }
-
-    .debug-step.active { border-left-color: #ff9800; background: #fff3e0; }
-    .debug-step.success { border-left-color: #4caf50; background: #e8f5e9; }
-    .debug-step.error { border-left-color: #f44336; background: #ffebee; }
-
-    .debug-step-number {
-      background: #666;
-      color: white;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      margin-right: 10px;
-      flex-shrink: 0;
-    }
-
-    .debug-step.active .debug-step-number { background: #ff9800; }
-    .debug-step.success .debug-step-number { background: #4caf50; }
-    .debug-step.error .debug-step-number { background: #f44336; }
-
-    .debug-step-info { flex: 1; }
-    .debug-step-title { font-size: 12px; font-weight: 500; }
-    .debug-step-desc { font-size: 10px; color: #999; margin-top: 2px; }
-
-    .debug-step-btn {
-      background: #555;
-      border: none;
-      color: white;
-      padding: 4px 8px;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 11px;
-    }
-
-    .debug-step-btn:hover { background: #777; }
-
-    .debug-input-group {
-      margin-top: 12px;
-      padding: 10px;
-      background: #f5f5f5;
-      border-radius: 4px;
-    }
-
-    .debug-input-group label {
-      display: block;
-      font-size: 11px;
-      color: #666;
-      margin-bottom: 4px;
-    }
-
-    .debug-input-group input {
-      width: 100%;
-      padding: 6px 8px;
-      background: white;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 12px;
-      box-sizing: border-box;
-    }
-
-    .debug-input-group input::placeholder { color: #999; }
-
-    .debug-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 12px;
-      flex-wrap: wrap;
-    }
-
-    .btn-debug {
-      background: #9c27b0;
-      color: white;
-      font-size: 12px;
-      padding: 6px 12px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
-
-    .btn-debug:hover { background: #7b1fa2; }
-
-    .debug-log {
-      margin-top: 12px;
-      padding: 8px;
-      background: #1e1e1e;
-      border-radius: 4px;
-      max-height: 120px;
-      overflow-y: auto;
-      font-family: 'Consolas', monospace;
-      font-size: 11px;
-    }
-
-    .debug-log-entry { padding: 2px 0; border-bottom: 1px solid #333; }
-    .debug-log-entry.info { color: #4fc3f7; }
-    .debug-log-entry.success { color: #81c784; }
-    .debug-log-entry.error { color: #e57373; }
-    .debug-log-entry.warn { color: #ffb74d; }
-
-    .settings-section { display: none; }
-
-    .view-container { position: relative; }
-    .main-view, .debug-view { width: 100%; }
-  </style>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 620px;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 20px;
+            background: #f4f7f9;
+            margin: 0;
+        }
+
+        @media (min-width: 800px) {
+            body {
+                width: 100vw;
+                height: 100vh;
+            }
+
+            .container {
+                max-width: 1100px;
+                margin: 0 auto;
+            }
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #f0f2f5;
+            padding-bottom: 15px;
+        }
+
+        /* Tab 导航样式 */
+        .tab-nav {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e4e7ed;
+        }
+
+        .tab-item {
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #606266;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+
+        .tab-item:hover {
+            color: #409eff;
+        }
+
+        .tab-item.active {
+            color: #409eff;
+            border-bottom-color: #409eff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .source-card {
+            border: 1px solid #e4e7ed;
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 20px;
+            transition: 0.3s;
+            background: white;
+        }
+
+        /* 隐藏未选中的输入区域，只展示标题栏 */
+        .source-card.disabled .input-grid {
+            display: none;
+        }
+
+        .source-card.disabled .source-title-row {
+            margin-bottom: 0;
+        }
+
+        /* 确保勾选框始终可点 */
+        .source-toggle {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+            z-index: 10;
+        }
+
+        .source-title-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .source-name {
+            font-weight: bold;
+            font-size: 17px;
+        }
+
+        .input-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .label {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #606266;
+        }
+
+        textarea {
+            width: 100%;
+            height: 90px;
+            border: 1px solid #dcdfe6;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            resize: none;
+            box-sizing: border-box;
+        }
+
+        textarea:focus {
+            border-color: #409eff;
+            outline: none;
+        }
+
+        .preview-box {
+            background: #fdf6ec;
+            border: 1px solid #faecd8;
+            color: #e6a23c;
+            font-size: 11px;
+            padding: 6px;
+            margin-top: 5px;
+            border-radius: 4px;
+            max-height: 50px;
+            overflow-y: auto;
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin: 25px 0;
+        }
+
+        button {
+            cursor: pointer;
+            padding: 10px 22px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+
+        .btn-run {
+            background: #409eff;
+            color: white;
+            flex-grow: 1;
+        }
+
+        .btn-copy {
+            background: #67c23a;
+            color: white;
+        }
+
+        .table-container {
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ebeef5;
+            font-size: 13px;
+        }
+
+        th {
+            background: #f5f7fa;
+            position: sticky;
+            top: 0;
+        }
+
+        /* 设置界面的表单行 */
+        .cfg-row {
+            border: 1px solid #eee;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            position: relative;
+            background: #fafafa;
+        }
+
+        .cfg-row input {
+            padding: 8px;
+            border: 1px solid #dcdfe6;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        /* 专利标号 tab 样式 */
+        .patent-section {
+            margin-bottom: 20px;
+        }
+
+        .patent-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #303133;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .patent-input-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .patent-input-row input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid #dcdfe6;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+
+        .patent-input-row input:focus {
+            border-color: #409eff;
+            outline: none;
+        }
+
+        .btn-patent {
+            background: #409eff;
+            color: white;
+            padding: 10px 16px;
+            white-space: nowrap;
+        }
+
+        .patent-hint {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: #909399;
+            margin-top: 10px;
+            padding: 10px 12px;
+            background: #f5f7fa;
+            border-radius: 6px;
+        }
+
+        .recent-section {
+            margin-top: 20px;
+        }
+
+        .recent-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .recent-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #303133;
+        }
+
+        .recent-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .recent-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: #fff;
+            border: 1px solid #ebeef5;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .recent-item:hover {
+            border-color: #409eff;
+            background: #f5f7fa;
+        }
+
+        .recent-no {
+            flex: 1;
+            font-size: 13px;
+            font-family: monospace;
+            color: #303133;
+            font-weight: 500;
+        }
+
+        .recent-time {
+            font-size: 11px;
+            color: #c0c4cc;
+            flex-shrink: 0;
+        }
+
+        .recent-delete {
+            font-size: 14px;
+            color: #c0c4cc;
+            cursor: pointer;
+            transition: color 0.2s;
+            flex-shrink: 0;
+        }
+
+        .recent-delete:hover {
+            color: #f56c6c;
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+            gap: 8px;
+        }
+
+        .empty-icon {
+            font-size: 40px;
+        }
+
+        .empty-text {
+            font-size: 14px;
+            color: #606266;
+            font-weight: 500;
+        }
+
+        .empty-desc {
+            font-size: 12px;
+            color: #c0c4cc;
+            text-align: center;
+        }
+
+        /* Toggle 开关样式 */
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #409eff;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 标号列表行 hover 样式 */
+        .callout-row:hover {
+            background-color: #f5f7fa;
+        }
+
+        .callout-row:active {
+            background-color: #e8eaed;
+        }
+
+        /* ==================== 以图搜图 Tab 样式 ==================== */
+        #tab-imagesearch {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            color: #333;
+        }
+
+        #tab-imagesearch .is-section {
+            background: white;
+            border-radius: 6px;
+            padding: 8px;
+            margin-bottom: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            max-width: 100%;
+            overflow: visible;
+        }
+
+        #tab-imagesearch .is-header-bar {
+            background: linear-gradient(135deg, #4285f4, #34a853);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        #tab-imagesearch .is-header-bar h3 {
+            font-size: 13px;
+            font-weight: 500;
+            margin: 0;
+        }
+
+        #tab-imagesearch .is-header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #tab-imagesearch .server-status-mini {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.9);
+            cursor: default;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        #tab-imagesearch .server-status-mini.clickable {
+            cursor: pointer;
+        }
+
+        #tab-imagesearch .server-status-mini.clickable:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        #tab-imagesearch .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        #tab-imagesearch .status-dot.online {
+            background: #4caf50;
+            box-shadow: 0 0 4px rgba(76, 175, 80, 0.6);
+        }
+
+        #tab-imagesearch .status-dot.offline {
+            background: #f44336;
+        }
+
+        #tab-imagesearch .status-dot.checking {
+            background: #ff9800;
+            animation: is-blink 1s infinite;
+        }
+
+        @keyframes is-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        #tab-imagesearch .is-icon-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        #tab-imagesearch .is-icon-btn:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        #tab-imagesearch .is-icon-btn svg {
+            width: 18px;
+            height: 18px;
+            fill: white;
+        }
+
+        #tab-imagesearch .is-icon-btn.active {
+            background: rgba(255,152,0,0.8);
+        }
+
+        #tab-imagesearch .is-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        #tab-imagesearch .is-section-title {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        #tab-imagesearch .is-btn-group-small {
+            display: flex;
+            gap: 2px;
+        }
+
+        #tab-imagesearch .is-btn-icon {
+            background: none;
+            border: 1px solid #e0e0e0;
+            cursor: pointer;
+            padding: 4px 6px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        #tab-imagesearch .is-btn-icon:hover {
+            background: #f0f0f0;
+            border-color: #ccc;
+        }
+
+        #tab-imagesearch .is-btn-icon:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #tab-imagesearch .is-btn-icon svg {
+            width: 14px;
+            height: 14px;
+            fill: #666;
+        }
+
+        #tab-imagesearch .is-btn-icon .tooltip {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        #tab-imagesearch .is-btn-icon .tooltip::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 4px solid transparent;
+            border-bottom-color: #333;
+        }
+
+        #tab-imagesearch .is-btn-icon:hover .tooltip {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        #tab-imagesearch .is-image-list {
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 6px;
+            word-break: break-all;
+        }
+
+        #tab-imagesearch .is-image-item {
+            display: flex;
+            align-items: center;
+            padding: 6px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        #tab-imagesearch .is-image-item:last-child {
+            border-bottom: none;
+        }
+
+        #tab-imagesearch .is-image-item input[type="checkbox"] {
+            margin-right: 8px;
+        }
+
+        #tab-imagesearch .is-image-item .filename {
+            flex: 1;
+            font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #tab-imagesearch .is-image-item .size {
+            font-size: 10px;
+            color: #999;
+            margin-left: 8px;
+        }
+
+        #tab-imagesearch .is-image-item .is-status {
+            font-size: 10px;
+            margin-left: 6px;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        #tab-imagesearch .is-image-item .is-status.downloaded {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        #tab-imagesearch .is-image-item .is-status.pending {
+            background: #fff3e0;
+            color: #e65100;
+        }
+
+        #tab-imagesearch .is-image-item .is-status.local {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        #tab-imagesearch .is-image-item .preview-trigger {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+            margin-left: 6px;
+            flex-shrink: 0;
+            border: 1px solid #e0e0e0;
+        }
+
+        #tab-imagesearch .is-image-item .preview-trigger:hover {
+            border-color: #4285f4;
+        }
+
+        #tab-imagesearch .is-image-item .preview-trigger img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #tab-imagesearch .is-select-all {
+            display: flex;
+            align-items: center;
+            padding: 6px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            margin-bottom: 6px;
+        }
+
+        #tab-imagesearch .is-select-all label {
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        #tab-imagesearch .is-progress {
+            margin-top: 8px;
+        }
+
+        #tab-imagesearch .is-progress-bar {
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        #tab-imagesearch .is-progress-fill {
+            height: 100%;
+            background: #4285f4;
+            transition: width 0.3s;
+        }
+
+        #tab-imagesearch .is-progress-text {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            margin-top: 4px;
+        }
+
+        #tab-imagesearch .is-download-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+        }
+
+        #tab-imagesearch .is-download-count {
+            font-weight: 500;
+            color: #4285f4;
+        }
+
+        #tab-imagesearch .is-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        #tab-imagesearch .is-btn-google {
+            background: #fff;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        #tab-imagesearch .is-btn-google:hover {
+            background: #f5f5f5;
+            border-color: #ccc;
+        }
+
+        #tab-imagesearch .is-btn-google:disabled {
+            background: #f5f5f5;
+            color: #999;
+            border-color: #eee;
+            cursor: not-allowed;
+        }
+
+        #tab-imagesearch .is-btn-amazon {
+            background: #fff;
+            color: #333;
+            border: 1px solid #ddd;
+            margin-top: 6px;
+        }
+
+        #tab-imagesearch .is-btn-amazon:hover {
+            background: #f5f5f5;
+            border-color: #ccc;
+        }
+
+        #tab-imagesearch .is-btn-amazon:disabled {
+            background: #f5f5f5;
+            color: #999;
+            border-color: #eee;
+            cursor: not-allowed;
+        }
+
+        #tab-imagesearch .is-btn-danger-small {
+            background: #ff5252;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        #tab-imagesearch .is-btn-danger-small:hover {
+            background: #d32f2f;
+        }
+
+        #tab-imagesearch .is-btn-danger-small:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        #tab-imagesearch .is-toast-container {
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        #tab-imagesearch .is-toast {
+            background: #333;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            opacity: 0;
+            transform: translateY(-10px);
+            animation: is-toastIn 0.3s ease forwards, is-toastOut 0.3s ease 4.5s forwards;
+            max-width: 300px;
+            text-align: center;
+        }
+
+        #tab-imagesearch .is-toast.success { background: #4caf50; }
+        #tab-imagesearch .is-toast.error { background: #f44336; }
+        #tab-imagesearch .is-toast.info { background: #2196f3; }
+
+        @keyframes is-toastIn {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes is-toastOut {
+            to { opacity: 0; transform: translateY(-10px); }
+        }
+
+        /* 调试面板 */
+        #tab-imagesearch .is-debug-panel { display: none; }
+        #tab-imagesearch .is-debug-panel.visible { display: block; }
+
+        #tab-imagesearch .is-debug-steps { margin-bottom: 12px; }
+
+        #tab-imagesearch .is-debug-step {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin-bottom: 4px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            border-left: 3px solid #666;
+        }
+
+        #tab-imagesearch .is-debug-step.active { border-left-color: #ff9800; background: #fff3e0; }
+        #tab-imagesearch .is-debug-step.success { border-left-color: #4caf50; background: #e8f5e9; }
+        #tab-imagesearch .is-debug-step.error { border-left-color: #f44336; background: #ffebee; }
+
+        #tab-imagesearch .is-debug-step-number {
+            background: #666;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+
+        #tab-imagesearch .is-debug-step.active .is-debug-step-number { background: #ff9800; }
+        #tab-imagesearch .is-debug-step.success .is-debug-step-number { background: #4caf50; }
+        #tab-imagesearch .is-debug-step.error .is-debug-step-number { background: #f44336; }
+
+        #tab-imagesearch .is-debug-step-info { flex: 1; }
+        #tab-imagesearch .is-debug-step-title { font-size: 12px; font-weight: 500; }
+        #tab-imagesearch .is-debug-step-desc { font-size: 10px; color: #999; margin-top: 2px; }
+
+        #tab-imagesearch .is-debug-step-btn {
+            background: #555;
+            border: none;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        #tab-imagesearch .is-debug-step-btn:hover { background: #777; }
+
+        #tab-imagesearch .is-debug-input-group {
+            margin-top: 12px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+
+        #tab-imagesearch .is-debug-input-group label {
+            display: block;
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        #tab-imagesearch .is-debug-input-group input {
+            width: 100%;
+            padding: 6px 8px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            box-sizing: border-box;
+        }
+
+        #tab-imagesearch .is-debug-input-group input::placeholder { color: #999; }
+
+        #tab-imagesearch .is-debug-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        #tab-imagesearch .is-btn-debug {
+            background: #9c27b0;
+            color: white;
+            font-size: 12px;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #tab-imagesearch .is-btn-debug:hover { background: #7b1fa2; }
+
+        #tab-imagesearch .is-debug-log {
+            margin-top: 12px;
+            padding: 8px;
+            background: #1e1e1e;
+            border-radius: 4px;
+            max-height: 120px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+        }
+
+        #tab-imagesearch .is-debug-log-entry { padding: 2px 0; border-bottom: 1px solid #333; }
+        #tab-imagesearch .is-debug-log-entry.info { color: #4fc3f7; }
+        #tab-imagesearch .is-debug-log-entry.success { color: #81c784; }
+        #tab-imagesearch .is-debug-log-entry.error { color: #e57373; }
+        #tab-imagesearch .is-debug-log-entry.warn { color: #ffb74d; }
+
+        #tab-imagesearch .is-footer {
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            padding: 6px 10px;
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            border-radius: 0 0 8px 8px;
+            margin-top: 8px;
+        }
+
+        #tab-imagesearch .is-footer .status.success { color: #2e7d32; }
+        #tab-imagesearch .is-footer .status.error { color: #c62828; }
+        #tab-imagesearch .is-footer .status.info { color: #1565c0; }
+
+        /* 图片预览遮罩 */
+        .is-preview-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 10000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .is-preview-overlay .preview-container {
+            max-width: 90%;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .is-preview-overlay img {
+            max-width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+
+        .is-preview-overlay .preview-info {
+            color: white;
+            font-size: 13px;
+            margin-top: 12px;
+            background: rgba(0,0,0,0.5);
+            padding: 6px 12px;
+            border-radius: 4px;
+        }
+
+        .is-preview-overlay .preview-close {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            color: white;
+            font-size: 28px;
+            cursor: pointer;
+            background: rgba(0,0,0,0.5);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .is-preview-overlay .preview-close:hover {
+            background: rgba(255,0,0,0.6);
+        }
+
+        /* 图片分割上传区域 */
+        .is-split-upload-area {
+            border: 2px dashed #dcdfe6;
+            border-radius: 8px;
+            padding: 30px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #fafafa;
+        }
+
+        .is-split-upload-area:hover {
+            border-color: #409eff;
+            background: #f5f7fa;
+        }
+
+        .is-split-upload-area.dragover {
+            border-color: #409eff;
+            background: #ecf5ff;
+        }
+    </style>
 </head>
+
 <body>
-  <div class="header">
-    <h1>🔍 Google Image Search</h1>
-    <div class="header-right">
-      <div class="server-status-mini" id="serverStatusMini">
-        <div class="status-dot checking" id="statusDot"></div>
-        <span id="statusLabel">检测中</span>
-      </div>
-      <button class="icon-btn" id="debugToggle" title="调试模式">
-        <svg viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
-      </button>
-    </div>
-  </div>
-
-  <div class="toast-container" id="toastContainer"></div>
-
-  <div class="content">
-    <div class="view-container">
-      <div class="debug-view debug-panel" id="debugPanel">
-        <div class="section">
-          <div class="section-header">
-            <span class="section-title">🛠️ 调试模式</span>
-          </div>
-          
-          <div class="debug-steps">
-            <div class="debug-step" data-step="1">
-              <div class="debug-step-number">1</div>
-              <div class="debug-step-info">
-                <div class="debug-step-title">打开Google搜图</div>
-                <div class="debug-step-desc">打开 https://www.google.com/imghp</div>
-              </div>
-              <button class="debug-step-btn" data-step-btn="1">执行</button>
+    <div class="container">
+        <div class="card">
+            <div class="header">
+                <h3 id="appTitle"></h3>
+                <button id="fullScreenBtn"
+                    style="background:#909399; color:white; padding: 6px 12px; font-size: 12px;">新窗口打开</button>
             </div>
-            
-            <div class="debug-step" data-step="2">
-              <div class="debug-step-number">2</div>
-              <div class="debug-step-info">
-                <div class="debug-step-title">点击"按图搜索"</div>
-                <div class="debug-step-desc">点击相机图标展开上传区域</div>
-              </div>
-              <button class="debug-step-btn" data-step-btn="2">执行</button>
+
+            <!-- Tab 导航 -->
+            <div class="tab-nav">
+                <div class="tab-item active" data-tab="collector">📸 素材采集</div>
+                <div class="tab-item" data-tab="patent">📄 专利标号</div>
+                <div class="tab-item" data-tab="imagesearch">🔍 以图搜图</div>
             </div>
-            
-            <div class="debug-step" data-step="3">
-              <div class="debug-step-number">3</div>
-              <div class="debug-step-info">
-                <div class="debug-step-title">点击"上传文件"标签</div>
-                <div class="debug-step-desc">切换到文件上传模式</div>
-              </div>
-              <button class="debug-step-btn" data-step-btn="3">执行</button>
+
+            <!-- 素材采集 Tab -->
+            <div class="tab-content active" id="tab-collector">
+                <!-- V2: Global Mixed Input -->
+                <div class="source-card" style="border-color: #409eff; background: #f0f7ff; margin-bottom: 10px;">
+                    <div class="source-title-row">
+                        <span class="source-name" style="color:#409eff">✨ 智能混合输入 (支持多源 ID/链接 混合粘贴)</span>
+                    </div>
+                    <textarea id="globalMixedInput" style="height: 100px;" placeholder="可以直接粘贴：
+1. 纯数字 ID (需 >= 8 位，自动检测来源)
+2. 完整链接 (自动识别)"></textarea>
+                    <div id="globalMixedPreview" class="preview-box"
+                        style="max-height: 120px; margin-top: 10px; display: none; background: #fff; border-color: #409eff;">
+                    </div>
+                    <div id="unmatchedBox" class="preview-box"
+                        style="display: none; background: #fff1f0; border-color: #ffa39e; color: #cf1322; margin-top: 10px;">
+                        <strong>⚠️ 未匹配或无效 ID (需 >= 8位):</strong>
+                        <div id="unmatchedList" style="margin-top: 5px; font-family: monospace;"></div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button id="startBtn" class="btn-run">开始批量同步采集</button>
+                    <button id="copyResultBtn" class="btn-copy">复制合并结果文本</button>
+                    <button id="batchDeleteBtn" style="background:#fef0f0; color:#f56c6c; display:none;">批量删除</button>
+                    <button id="clearBtn" style="background:#fef0f0; color:#909399;">清空历史</button>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 30px;"><input type="checkbox" id="selectAll"></th>
+                                <th>标识/来源</th>
+                                <th>作者 (点击复制)</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultBody"></tbody>
+                    </table>
+                </div>
+
+                <!-- 配置来源区域 -->
+                <div class="config-section" style="margin-top: 20px; border-top: 2px solid #e4e7ed; padding-top: 15px;">
+                    <div id="settingsBtn" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 10px 0;">
+                        <span style="font-weight: 600; color: #303133; font-size: 14px;">⚙️ 配置来源</span>
+                        <span id="settingsArrow" style="color: #909399; transition: transform 0.3s;">▼</span>
+                    </div>
+                    <div id="settingsPanel" style="display: none;">
+                        <div id="configItemsContainer"
+                            style="max-height: 300px; overflow-y: auto; padding-right: 5px; margin-bottom: 15px; display: flex; flex-direction: column;">
+                        </div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                            <button id="addSourceConfigBtn" style="background: #67c23a; color: white;">+ 新增来源</button>
+                            <button id="exportConfigBtn" style="background: #e6a23c; color: white;">导出 JSON</button>
+                            <button id="importConfigBtn" style="background: #909399; color: white;">导入 JSON</button>
+                            <input type="file" id="importFileInput" accept=".json" style="display: none;">
+                        </div>
+                        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                            <button id="saveSettingsBtn" style="background: #409eff; color: white;">保存并应用</button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            
-            <div class="debug-step" data-step="4">
-              <div class="debug-step-number">4</div>
-              <div class="debug-step-info">
-                <div class="debug-step-title">服务器选择文件</div>
-                <div class="debug-step-desc">pyautogui粘贴路径并回车</div>
-              </div>
-              <button class="debug-step-btn" data-step-btn="4">执行</button>
+
+            <!-- 专利标号 Tab -->
+            <div class="tab-content" id="tab-patent">
+                <div class="patent-section">
+                    <div class="patent-section-title">🔍 专利标号查询</div>
+                    <div class="patent-input-row">
+                        <input type="text" id="patentNoInput" placeholder="输入专利号，如 US8066257B2">
+                        <button id="openPatentBtn" class="btn-patent">打开专利</button>
+                    </div>
+                    <div class="patent-hint">
+                        <span>💡</span>
+                        <span>打开 Google Patents 页面后，扩展会自动高亮 Claims 中的标号</span>
+                    </div>
+                </div>
+
+                <!-- 显示原文开关 -->
+                <div class="patent-section" style="margin-top: 15px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; background: #f5f7fa; border-radius: 8px;">
+                        <div>
+                            <span style="font-weight: 600; color: #303133; font-size: 14px;">📄 显示原文</span>
+                            <div style="font-size: 12px; color: #909399; margin-top: 4px;">切换后显示未标注的原始 Claims 文本</div>
+                        </div>
+                        <label class="toggle-switch" style="position: relative; display: inline-block; width: 50px; height: 26px;">
+                            <input type="checkbox" id="showOriginalToggle" style="opacity: 0; width: 0; height: 0;">
+                            <span class="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #dcdfe6; transition: 0.3s; border-radius: 26px;"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 标号列表 -->
+                <div id="calloutsSection" class="patent-section" style="margin-top: 15px; display: none;">
+                    <div class="patent-section-title">🏷️ 标号</div>
+                    <div style="border: 1px solid #e4e7ed; border-radius: 8px; overflow: hidden;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                            <thead>
+                                <tr style="background: #f5f7fa;">
+                                    <th style="padding: 10px 12px; text-align: left; font-weight: 600; color: #303133; border-bottom: 1px solid #e4e7ed; width: 80px;">标号</th>
+                                    <th style="padding: 10px 12px; text-align: left; font-weight: 600; color: #303133; border-bottom: 1px solid #e4e7ed;">关键字</th>
+                                </tr>
+                            </thead>
+                            <tbody id="calloutsList"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="recent-section" id="recentSection" style="display: none;">
+                    <div class="recent-header">
+                        <span class="recent-title">最近访问</span>
+                        <button id="clearRecentBtn"
+                            style="background:transparent; color:#909399; font-size:12px; padding:4px 8px;">清空</button>
+                    </div>
+                    <div class="recent-list" id="recentList"></div>
+                </div>
+
+                <div class="empty-state" id="patentEmptyState">
+                    <div class="empty-icon">📄</div>
+                    <div class="empty-text">输入专利号开始使用</div>
+                    <div class="empty-desc">支持 Google Patents 格式，如 US8066257B2、CN112345678A</div>
+                </div>
             </div>
-          </div>
 
-          <div class="debug-input-group">
-            <label>自定义选择器 (可选)</label>
-            <input type="text" id="debugSelector" placeholder="例如: div[aria-label='按图搜索']">
-          </div>
+            <!-- 以图搜图 Tab -->
+            <div class="tab-content" id="tab-imagesearch">
+                <div class="is-toast-container" id="isToastContainer"></div>
 
-          <div class="debug-input-group">
-            <label>文本内容过滤 (可选)</label>
-            <input type="text" id="debugTextFilter" placeholder="例如: 上传文件">
-          </div>
+                <div class="is-header-bar">
+                    <h3>🔍 以图搜图</h3>
+                    <div class="is-header-right">
+                        <div class="server-status-mini" id="isServerStatusMini">
+                            <div class="status-dot checking" id="isStatusDot"></div>
+                            <span id="isStatusLabel">检测中</span>
+                        </div>
+                        <button class="is-icon-btn" id="isDebugToggle" title="调试模式">
+                            <svg viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>
+                        </button>
+                    </div>
+                </div>
 
-          <div class="debug-input-group">
-            <label>测试文件名 (步骤4用)</label>
-            <input type="text" id="debugFilename" placeholder="例如: image.jpg">
-          </div>
+                <!-- 图片分割模块 -->
+                <div class="is-section" id="isSplitSection">
+                    <div class="is-section-header" style="cursor: pointer;" id="isSplitToggle">
+                        <span class="is-section-title">✂️ 图片分割</span>
+                        <span style="color: #909399; font-size: 12px;" id="isSplitArrow">▼</span>
+                    </div>
+                    <div id="isSplitContent" style="display: none; margin-top: 10px;">
+                        <div class="is-split-upload-area" id="isSplitDropZone">
+                            <svg viewBox="0 0 24 24" style="width: 48px; height: 48px; fill: #909399;">
+                                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                            </svg>
+                            <p style="margin: 10px 0 5px; color: #606266; font-size: 14px;">拖拽图片到此处，或点击选择文件</p>
+                            <p style="margin: 0; color: #909399; font-size: 12px;">支持网格排列的图片自动分割</p>
+                            <input type="file" id="isSplitFileInput" accept="image/*" style="display: none;">
+                        </div>
+                        <div id="isSplitPreview" style="display: none; margin-top: 10px; text-align: center;">
+                            <img id="isSplitPreviewImg" style="max-width: 100%; max-height: 150px; border-radius: 4px; border: 1px solid #e4e7ed;">
+                            <div style="margin-top: 8px;">
+                                <button class="is-btn-icon" id="isSplitConfirmBtn" title="开始分割" style="background: #409eff; color: white; padding: 6px 16px; border-radius: 4px;">
+                                    <svg viewBox="0 0 24 24" style="width: 16px; height: 16px; fill: white; margin-right: 4px;"><path d="M3 5v14h18V5H3zm8 12H5v-2h6v2zm0-4H5v-2h6v2zm0-4H5V7h6v2zm8 8h-6V7h6v10z"/></svg>
+                                    开始分割
+                                </button>
+                                <button class="is-btn-icon" id="isSplitCancelBtn" title="取消" style="background: #909399; color: white; padding: 6px 16px; border-radius: 4px; margin-left: 8px;">
+                                    取消
+                                </button>
+                            </div>
+                        </div>
+                        <div id="isSplitProgress" style="display: none; margin-top: 10px; text-align: center;">
+                            <div class="is-progress-bar">
+                                <div class="is-progress-fill" id="isSplitProgressFill" style="width: 0%"></div>
+                            </div>
+                            <p style="margin: 5px 0 0; color: #606266; font-size: 12px;" id="isSplitProgressText">分割中...</p>
+                        </div>
+                    </div>
+                </div>
 
-          <div class="debug-actions">
-            <button class="btn-debug" id="debugTestSelectorBtn">测试选择器</button>
-            <button class="btn-debug" id="debugInspectPageBtn">检查页面</button>
-            <button class="btn-debug" id="debugClearLogBtn">清空日志</button>
-          </div>
+                <div class="is-section">
+                    <div class="is-section-header">
+                        <span class="is-section-title">📸 图片列表</span>
+                        <div class="is-btn-group-small">
+                            <button class="is-btn-icon" id="isScanBtn" title="扫描页面图片">
+                                <svg viewBox="0 0 24 24"><path d="M9.5 6.5v3h-3v-3h3M11 5H5v6h6V5zm-1.5 9.5v3h-3v-3h3M11 13H5v6h6v-6zm6.5-6.5v3h-3v-3h3M19 5h-6v6h6V5zm-6 8h1.5v1.5H13V13zm1.5 1.5H16V16h-1.5v-1.5zM16 13h1.5v1.5H16V13zm-3 3h1.5v1.5H13V16zm1.5 1.5H16V19h-1.5v-1.5zM16 16h1.5v1.5H16V16zm1.5-1.5H19V16h-1.5v-1.5zm0 3H19V19h-1.5v-1.5zM22 7h-2V4h-3V2h5v5zm-2 15h-3v-2h3v-3h2v5h-2zM2 22h5v-2H4v-3H2v5zM2 2v5h2V4h3V2H2z"/></svg>
+                                <span class="tooltip">扫描页面图片</span>
+                            </button>
+                            <button class="is-btn-icon" id="isSelectLocalBtn" title="选择本地图片">
+                                <svg viewBox="0 0 24 24"><path d="M19 7v2.99s-1.99.01-2 0V7h-3s.01-1.99 0-2h3V2h2v3h3v2h-3zm-3 4V8h-3V5H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-8h-3zM5 19l3-4 2 3 3-4 4 5H5z"/></svg>
+                                <span class="tooltip">选择本地图片</span>
+                            </button>
+                            <button class="is-btn-icon" id="isClearImagesBtn" title="清除图片列表" disabled>
+                                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                                <span class="tooltip">清除图片</span>
+                            </button>
+                            <button class="is-btn-icon" id="isDownloadBtn" title="下载远程图片/打开本地图片目录" disabled>
+                                <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                                <span class="tooltip">下载/打开目录</span>
+                            </button>
+                        </div>
+                    </div>
 
-          <div class="debug-log" id="debugLog">
-            <div class="debug-log-entry info">调试模式已启用</div>
-          </div>
+                    <div class="is-select-all">
+                        <input type="checkbox" id="isSelectAll" checked>
+                        <label for="isSelectAll">全选</label>
+                        <span id="isImageCount" style="margin-left: auto; font-size: 11px; color: #666;">0 张图片</span>
+                    </div>
+
+                    <div class="is-image-list" id="isImageList">
+                        <div style="text-align: center; color: #999; padding: 20px;">
+                            暂无图片<br><small>点击扫描或选择本地图片</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="is-section">
+                    <button class="is-btn is-btn-google" id="isSearchBtn" disabled>
+                        <svg style="width:18px;height:18px;margin-right:8px;" viewBox="0 0 24 24">
+                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
+                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                        </svg>
+                        Google搜图
+                    </button>
+                    <button class="is-btn is-btn-amazon" id="isAmazonSearchBtn" disabled>
+                        <svg style="width:18px;height:18px;margin-right:8px;" viewBox="0 0 48 48">
+                            <path fill="#343B45" d="M25.4 25.96c-.74 1.48-2.01 2.44-3.39 2.76-.21 0-.53.1-.85.1-2.33 0-3.71-1.8-3.71-4.45 0-3.4 2.01-4.98 4.55-5.73 1.38-.32 2.97-.42 4.56-.42v1.27c0 2.44.1 4.35-1.16 6.47zm1.17-12.6c-1.38.1-2.97.21-4.56.42-2.44.32-4.87.74-6.88 1.7-3.92 1.59-6.57 4.98-6.57 9.96 0 6.26 4.03 9.43 9.11 9.43 1.7 0 3.07-.21 4.34-.53 2.02-.64 3.71-1.8 5.72-3.92 1.17 1.59 1.49 2.33 3.5 4.03.53.21 1.06.21 1.48-.1 1.27-1.06 3.5-2.97 4.66-4.03.53-.42.43-1.06.11-1.59-1.16-1.48-2.33-2.76-2.33-5.62V13.56c0-4.03.33-7.74-2.64-10.49C30.07.85 26.25 0 23.28 0h-1.27C16.61.31 10.89 2.65 9.62 9.32c-.21.85.43 1.17.85 1.27l5.93.74c.64-.11.96-.64 1.06-1.17.53-2.33 2.44-3.5 4.55-3.71h.43c1.27 0 2.65.53 3.39 1.59.85 1.27.74 2.97.74 4.45v.85z"/>
+                            <path fill="#FF9A00" d="M48 35.95v-.01c-.02-.5-.13-.88-.34-1.2l-.02-.03-.03-.03c-.21-.23-.41-.32-.63-.42-.66-.25-1.61-.39-2.76-.39-.83 0-1.74.08-2.66.28l-.01-.06-.92.31-.02.01-.52.17v.02c-.61.25-1.17.57-1.68.94-.32.24-.59.56-.6 1.05-.01.27.13.57.36.75.22.18.48.24.71.24.05 0 .1 0 .15-.01l.04-.01.04-.01c.45-.1 1.11-.17 1.88-.28.66-.07 1.36-.13 1.97-.13.43 0 .82.03 1.08.06.13.03.23.06.28.08.02.01.03.01.04.02.01.04.03.13.03.27.01.51-.21 1.45-.5 2.37-.29.93-.64 1.85-.87 2.46-.06.14-.09.3-.09.47-.01.25.1.55.31.75.22.18.49.26.72.26h.01c.34 0 .63-.14.87-.33 2.34-2.11 3.16-5.48 3.19-7.37zM41.05 38.87c-.24 0-.49.06-.72.16-.26.1-.52.22-.78.33l-.37.15-.47.19v.01c-5.15 2.09-10.56 3.31-15.57 3.42-.18.01-.36.01-.54.01-7.87.01-14.3-3.64-20.78-7.24-.23-.12-.46-.18-.69-.18-.29 0-.59.11-.81.31-.22.21-.35.51-.32.81 0 .4.21.76.51.99 6.08 5.29 12.74 10.2 21.7 10.22.18 0 .35 0 .53-.01 5.71-.13 12.15-2.06 17.16-5.2l.03-.02c.66-.39 1.31-.84 1.93-1.33.38-.29.65-.73.65-1.2-.02-.82-.72-1.37-1.47-1.37z"/>
+                        </svg>
+                        Amazon搜图
+                    </button>
+                    <div class="is-download-status">
+                        <span id="isDownloadCount"></span>
+                        <button class="is-btn-danger-small" id="isClearDownloadBtn" style="display: none;">清空下载记录</button>
+                    </div>
+                </div>
+
+                <div class="is-progress" id="isProgressSection" style="display: none;">
+                    <div class="is-progress-bar">
+                        <div class="is-progress-fill" id="isProgressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="is-progress-text" id="isProgressText">准备中...</div>
+                </div>
+
+                <!-- 调试面板 -->
+                <div class="is-debug-panel" id="isDebugPanel">
+                    <div class="is-section">
+                        <div class="is-section-header">
+                            <span class="is-section-title">🛠️ 调试模式</span>
+                        </div>
+
+                        <div class="is-debug-steps">
+                            <div class="is-debug-step" data-step="1">
+                                <div class="is-debug-step-number">1</div>
+                                <div class="is-debug-step-info">
+                                    <div class="is-debug-step-title">打开Google搜图</div>
+                                    <div class="is-debug-step-desc">打开 https://www.google.com/imghp</div>
+                                </div>
+                                <button class="is-debug-step-btn" data-step-btn="1">执行</button>
+                            </div>
+
+                            <div class="is-debug-step" data-step="2">
+                                <div class="is-debug-step-number">2</div>
+                                <div class="is-debug-step-info">
+                                    <div class="is-debug-step-title">点击"按图搜索"</div>
+                                    <div class="is-debug-step-desc">点击相机图标展开上传区域</div>
+                                </div>
+                                <button class="is-debug-step-btn" data-step-btn="2">执行</button>
+                            </div>
+
+                            <div class="is-debug-step" data-step="3">
+                                <div class="is-debug-step-number">3</div>
+                                <div class="is-debug-step-info">
+                                    <div class="is-debug-step-title">点击"上传文件"标签</div>
+                                    <div class="is-debug-step-desc">切换到文件上传模式</div>
+                                </div>
+                                <button class="is-debug-step-btn" data-step-btn="3">执行</button>
+                            </div>
+
+                            <div class="is-debug-step" data-step="4">
+                                <div class="is-debug-step-number">4</div>
+                                <div class="is-debug-step-info">
+                                    <div class="is-debug-step-title">服务器选择文件</div>
+                                    <div class="is-debug-step-desc">pyautogui粘贴路径并回车</div>
+                                </div>
+                                <button class="is-debug-step-btn" data-step-btn="4">执行</button>
+                            </div>
+                        </div>
+
+                        <div class="is-debug-input-group">
+                            <label>自定义选择器 (可选)</label>
+                            <input type="text" id="isDebugSelector" placeholder="例如: div[aria-label='按图搜索']">
+                        </div>
+
+                        <div class="is-debug-input-group">
+                            <label>文本内容过滤 (可选)</label>
+                            <input type="text" id="isDebugTextFilter" placeholder="例如: 上传文件">
+                        </div>
+
+                        <div class="is-debug-input-group">
+                            <label>测试文件名 (步骤4用)</label>
+                            <input type="text" id="isDebugFilename" placeholder="例如: image.jpg">
+                        </div>
+
+                        <div class="is-debug-actions">
+                            <button class="is-btn-debug" id="isDebugTestSelectorBtn">测试选择器</button>
+                            <button class="is-btn-debug" id="isDebugInspectPageBtn">检查页面</button>
+                            <button class="is-btn-debug" id="isDebugClearLogBtn">清空日志</button>
+                        </div>
+
+                        <div class="is-debug-log" id="isDebugLog">
+                            <div class="is-debug-log-entry info">调试模式已启用</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 服务器地址（隐藏） -->
+                <input type="hidden" id="isServerUrl" value="http://localhost:5277">
+
+                <div class="is-footer" id="isFooter">
+                    <span class="status" id="isStatus">就绪</span>
+                </div>
+            </div>
+
         </div>
-      </div>
-
-      <div class="main-view" id="mainContent">
-        <div class="section">
-          <div class="section-header">
-            <span class="section-title">📸 图片列表</span>
-            <div class="btn-group-small">
-              <button class="btn-icon" id="scanBtn" title="扫描页面图片">
-                <svg viewBox="0 0 24 24"><path d="M9.5 6.5v3h-3v-3h3M11 5H5v6h6V5zm-1.5 9.5v3h-3v-3h3M11 13H5v6h6v-6zm6.5-6.5v3h-3v-3h3M19 5h-6v6h6V5zm-6 8h1.5v1.5H13V13zm1.5 1.5H16V16h-1.5v-1.5zM16 13h1.5v1.5H16V13zm-3 3h1.5v1.5H13V16zm1.5 1.5H16V19h-1.5v-1.5zM16 16h1.5v1.5H16V16zm1.5-1.5H19V16h-1.5v-1.5zm0 3H19V19h-1.5v-1.5zM22 7h-2V4h-3V2h5v5zm-2 15h-3v-2h3v-3h2v5h-2zM2 22h5v-2H4v-3H2v5zM2 2v5h2V4h3V2H2z"/></svg>
-                <span class="tooltip">扫描页面图片</span>
-              </button>
-              <button class="btn-icon" id="selectLocalBtn" title="选择本地图片">
-                <svg viewBox="0 0 24 24"><path d="M19 7v2.99s-1.99.01-2 0V7h-3s.01-1.99 0-2h3V2h2v3h3v2h-3zm-3 4V8h-3V5H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-8h-3zM5 19l3-4 2 3 3-4 4 5H5z"/></svg>
-                <span class="tooltip">选择本地图片</span>
-              </button>
-              <button class="btn-icon" id="clearImagesBtn" title="清除图片列表" disabled>
-                <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                <span class="tooltip">清除图片</span>
-              </button>
-              <button class="btn-icon" id="downloadBtn" title="下载选中图片" disabled>
-                <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-                <span class="tooltip">下载选中图片</span>
-              </button>
-            </div>
-          </div>
-          
-          <div class="select-all">
-            <input type="checkbox" id="selectAll" checked>
-            <label for="selectAll">全选</label>
-            <span id="imageCount" style="margin-left: auto; font-size: 11px; color: #666;">0 张图片</span>
-          </div>
-          
-          <div class="image-list" id="imageList">
-            <div style="text-align: center; color: #999; padding: 20px;">
-              暂无图片<br><small>点击扫描或选择本地图片</small>
-            </div>
-          </div>
-        </div>
-
-        <div class="section">
-          <button class="btn btn-google" id="searchBtn" disabled>
-            <svg style="width:18px;height:18px;margin-right:8px;" viewBox="0 0 24 24">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-            </svg>
-            Google搜图
-          </button>
-          <button class="btn btn-amazon" id="amazonSearchBtn" disabled>
-            <svg style="width:18px;height:18px;margin-right:8px;" viewBox="0 0 48 48">
-              <path fill="#343B45" d="M25.4 25.96c-.74 1.48-2.01 2.44-3.39 2.76-.21 0-.53.1-.85.1-2.33 0-3.71-1.8-3.71-4.45 0-3.4 2.01-4.98 4.55-5.73 1.38-.32 2.97-.42 4.56-.42v1.27c0 2.44.1 4.35-1.16 6.47zm1.17-12.6c-1.38.1-2.97.21-4.56.42-2.44.32-4.87.74-6.88 1.7-3.92 1.59-6.57 4.98-6.57 9.96 0 6.26 4.03 9.43 9.11 9.43 1.7 0 3.07-.21 4.34-.53 2.02-.64 3.71-1.8 5.72-3.92 1.17 1.59 1.49 2.33 3.5 4.03.53.21 1.06.21 1.48-.1 1.27-1.06 3.5-2.97 4.66-4.03.53-.42.43-1.06.11-1.59-1.16-1.48-2.33-2.76-2.33-5.62V13.56c0-4.03.33-7.74-2.64-10.49C30.07.85 26.25 0 23.28 0h-1.27C16.61.31 10.89 2.65 9.62 9.32c-.21.85.43 1.17.85 1.27l5.93.74c.64-.11.96-.64 1.06-1.17.53-2.33 2.44-3.5 4.55-3.71h.43c1.27 0 2.65.53 3.39 1.59.85 1.27.74 2.97.74 4.45v.85z"/>
-              <path fill="#FF9A00" d="M48 35.95v-.01c-.02-.5-.13-.88-.34-1.2l-.02-.03-.03-.03c-.21-.23-.41-.32-.63-.42-.66-.25-1.61-.39-2.76-.39-.83 0-1.74.08-2.66.28l-.01-.06-.92.31-.02.01-.52.17v.02c-.61.25-1.17.57-1.68.94-.32.24-.59.56-.6 1.05-.01.27.13.57.36.75.22.18.48.24.71.24.05 0 .1 0 .15-.01l.04-.01.04-.01c.45-.1 1.11-.17 1.88-.28.66-.07 1.36-.13 1.97-.13.43 0 .82.03 1.08.06.13.03.23.06.28.08.02.01.03.01.04.02.01.04.03.13.03.27.01.51-.21 1.45-.5 2.37-.29.93-.64 1.85-.87 2.46-.06.14-.09.3-.09.47-.01.25.1.55.31.75.22.18.49.26.72.26h.01c.34 0 .63-.14.87-.33 2.34-2.11 3.16-5.48 3.19-7.37zM41.05 38.87c-.24 0-.49.06-.72.16-.26.1-.52.22-.78.33l-.37.15-.47.19v.01c-5.15 2.09-10.56 3.31-15.57 3.42-.18.01-.36.01-.54.01-7.87.01-14.3-3.64-20.78-7.24-.23-.12-.46-.18-.69-.18-.29 0-.59.11-.81.31-.22.21-.35.51-.32.81 0 .4.21.76.51.99 6.08 5.29 12.74 10.2 21.7 10.22.18 0 .35 0 .53-.01 5.71-.13 12.15-2.06 17.16-5.2l.03-.02c.66-.39 1.31-.84 1.93-1.33.38-.29.65-.73.65-1.2-.02-.82-.72-1.37-1.47-1.37z"/>
-            </svg>
-            Amazon搜图
-          </button>
-          <div class="download-status">
-            <span id="downloadCount"></span>
-            <button class="btn-danger-small" id="clearDownloadBtn" style="display: none;">清空下载记录</button>
-          </div>
-        </div>
-
-        <div class="progress" id="progressSection" style="display: none;">
-          <div class="progress-bar">
-            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-          </div>
-          <div class="progress-text" id="progressText">准备中...</div>
-        </div>
-      </div>
     </div>
 
-    <div class="section settings-section">
-      <input type="text" id="serverUrl" value="http://localhost:5277">
+    <!-- 图片预览遮罩 -->
+    <div class="is-preview-overlay" id="isPreviewOverlay">
+        <div class="preview-close" id="isPreviewClose">✕</div>
+        <div class="preview-container">
+            <img id="isPreviewImage" src="" alt="">
+            <div class="preview-info" id="isPreviewInfo"></div>
+        </div>
     </div>
-  </div>
 
-  <div class="footer" id="footer">
-    <span class="status" id="status">就绪</span>
-  </div>
-
-  <div class="preview-overlay" id="previewOverlay">
-    <div class="preview-close" id="previewClose">✕</div>
-    <div class="preview-container">
-      <img id="previewImage" src="" alt="">
-      <div class="preview-info" id="previewInfo"></div>
-    </div>
-  </div>
-
-  <script src="popup.js"></script>
+    <script src="popup.js"></script>
+    <script src="patent.js"></script>
+    <script src="imagesearch.js"></script>
 </body>
+
 </html>

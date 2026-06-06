@@ -635,23 +635,37 @@ DATA_DIR = Path(CONFIG['data_dir'])
 logger, heartbeat_logger = setup_logging(LOGS_DIR)
 
 # 导入依赖
+import platform
+system = platform.system()
+
 try:
     import pyautogui
     import pyperclip
-    import pygetwindow as gw
-    import win32gui
-    import win32con
-    DEPENDENCIES_OK = True
+    PYAUTOGUI_AVAILABLE = True
     pyautogui.FAILSAFE = True
     pyautogui.PAUSE = 0.05
+
+    if system == 'Darwin':  # macOS
+        import subprocess
+        import Quartz
+        logger.info("macOS环境，使用Quartz进行窗口管理")
+    elif system == 'Windows':
+        import pygetwindow as gw
+        import win32gui
+        import win32con
+        logger.info("Windows环境，使用pygetwindow进行窗口管理")
+
+    DEPENDENCIES_OK = True
 except ImportError as e:
     logger.warning(f"依赖缺失: {e}")
     DEPENDENCIES_OK = False
 
-try:
-    import winreg
-except ImportError:
-    pass
+# Windows 注册表（仅 Windows）
+if system == 'Windows':
+    try:
+        import winreg
+    except ImportError:
+        pass
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -674,48 +688,108 @@ autostart_enabled = False
 
 # ==================== 开机自启 ====================
 
-AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
 def get_exe_path():
     if getattr(sys, 'frozen', False):
         return sys.executable
     return os.path.abspath(__file__)
 
 def is_autostart_enabled():
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY, 0, winreg.KEY_READ)
+    """检查开机自启是否启用"""
+    if system == 'Windows':
         try:
-            value, _ = winreg.QueryValueEx(key, APP_NAME)
-            winreg.CloseKey(key)
-            return True
-        except FileNotFoundError:
-            winreg.CloseKey(key)
+            AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY, 0, winreg.KEY_READ)
+            try:
+                value, _ = winreg.QueryValueEx(key, APP_NAME)
+                winreg.CloseKey(key)
+                return True
+            except FileNotFoundError:
+                winreg.CloseKey(key)
+                return False
+        except Exception:
             return False
-    except Exception:
-        return False
+    elif system == 'Darwin':  # macOS
+        plist_path = Path.home() / "Library" / "LaunchAgents" / f"com.qingqinghelper.{APP_DIR_NAME}.plist"
+        return plist_path.exists()
+    return False
 
 def set_autostart(enable):
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE)
-        
-        if enable:
-            exe_path = get_exe_path()
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
-            logger.info(f"已启用开机自启: {exe_path}")
-        else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-            except FileNotFoundError:
-                pass
-            logger.info("已禁用开机自启")
-        
-        winreg.CloseKey(key)
-        return True
-    except Exception as e:
-        logger.error(f"设置开机自启失败: {e}")
-        return False
+    """设置开机自启"""
+    if system == 'Windows':
+        try:
+            AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE)
+            
+            if enable:
+                exe_path = get_exe_path()
+                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
+                logger.info(f"已启用开机自启: {exe_path}")
+            else:
+                try:
+                    winreg.DeleteValue(key, APP_NAME)
+                except FileNotFoundError:
+                    pass
+                logger.info("已禁用开机自启")
+            
+            winreg.CloseKey(key)
+            return True
+        except Exception as e:
+            logger.error(f"设置开机自启失败: {e}")
+            return False
+    elif system == 'Darwin':  # macOS - 使用 LaunchAgent
+        try:
+            plist_path = Path.home() / "Library" / "LaunchAgents" / f"com.qingqinghelper.{APP_DIR_NAME}.plist"
+            
+            if enable:
+                exe_path = get_exe_path()
+                plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.qingqinghelper.{APP_DIR_NAME}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>'''
+                plist_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(plist_path, 'w') as f:
+                    f.write(plist_content)
+                logger.info(f"已启用开机自启: {plist_path}")
+            else:
+                if plist_path.exists():
+                    plist_path.unlink()
+                    logger.info("已禁用开机自启")
+            return True
+        except Exception as e:
+            logger.error(f"设置开机自启失败: {e}")
+            return False
+    return False
 
 # ==================== 工具函数 ====================
+
+def show_message_box(msg, msg_type="info"):
+    """跨平台消息框"""
+    try:
+        if system == 'Darwin':  # macOS
+            import subprocess
+            icon = {"info": "note", "warning": "caution", "error": "stop"}.get(msg_type, "note")
+            script = f'display dialog "{msg}" with title "{APP_NAME}" with icon {icon}'
+            subprocess.run(["osascript", "-e", script], capture_output=True)
+        elif system == 'Windows':
+            import ctypes
+            icon_flag = {"info": 0x40, "warning": 0x30, "error": 0x10}.get(msg_type, 0x40)
+            ctypes.windll.user32.MessageBoxW(0, msg, APP_NAME, icon_flag)
+        else:  # Linux
+            print(f"[{msg_type.upper()}] {msg}")
+    except Exception:
+        print(f"[{msg_type.upper()}] {msg}")
 
 def get_today_dir():
     return datetime.now().strftime('%Y%m%d')
@@ -781,23 +855,52 @@ def get_browser_window():
     """获取浏览器窗口"""
     if not DEPENDENCIES_OK:
         return None
-    
-    try:
-        browsers = ['Chrome', 'Edge', 'Google Chrome', 'Microsoft Edge']
-        
-        for browser_name in browsers:
-            try:
-                windows = gw.getWindowsWithTitle(browser_name)
-                if windows:
-                    for win in windows:
-                        if not win.isMinimized and win.width > 100 and win.height > 100:
-                            return win
-                    return windows[0]
-            except Exception:
-                continue
-    except Exception:
-        pass
-    
+
+    if system == 'Darwin':  # macOS
+        try:
+            # 使用 Quartz 获取窗口列表
+            options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+            window_list = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID)
+
+            browsers = ['Google Chrome', 'Chrome', 'Safari', 'Firefox', 'Microsoft Edge', 'Edge']
+
+            for window_info in window_list:
+                owner_name = window_info.get(Quartz.kCGWindowOwnerName, '')
+                window_name = window_info.get(Quartz.kCGWindowName, '')
+
+                for browser in browsers:
+                    if browser.lower() in owner_name.lower():
+                        # 检查窗口大小
+                        bounds = window_info.get(Quartz.kCGWindowBounds, {})
+                        width = bounds.get('Width', 0)
+                        height = bounds.get('Height', 0)
+                        if width > 100 and height > 100:
+                            return {
+                                'title': window_name,
+                                'owner': owner_name,
+                                'bounds': bounds,
+                                'window_id': window_info.get(Quartz.kCGWindowNumber, 0)
+                            }
+        except Exception as e:
+            logger.warning(f"获取浏览器窗口失败: {e}")
+
+    elif system == 'Windows':
+        try:
+            browsers = ['Chrome', 'Edge', 'Google Chrome', 'Microsoft Edge']
+
+            for browser_name in browsers:
+                try:
+                    windows = gw.getWindowsWithTitle(browser_name)
+                    if windows:
+                        for win in windows:
+                            if not win.isMinimized and win.width > 100 and win.height > 100:
+                                return win
+                        return windows[0]
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
     return None
 
 def calculate_screen_position(viewport_x, viewport_y, nav_bar_height=85):
@@ -1355,40 +1458,65 @@ def process_upload(filename):
 # ==================== 系统托盘 ====================
 
 def create_icon_image(color='#4caf50'):
+    """创建 PIL Image 图标（Windows pystray 使用）"""
     from PIL import Image, ImageDraw
-    
+
     width = 64
     height = 64
     image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    
+
     draw.ellipse([4, 4, width-4, height-4], fill=color)
     draw.ellipse([14, 14, 38, 38], outline='white', width=3)
     draw.line([35, 35, 50, 50], fill='white', width=3)
-    
+
     return image
 
+def create_icon_image_path(color='#4caf50'):
+    """创建图标文件路径（macOS rumps 使用）"""
+    import tempfile
+    from PIL import Image, ImageDraw
+
+    width = 64
+    height = 64
+    image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    draw.ellipse([4, 4, width-4, height-4], fill=color)
+    draw.ellipse([14, 14, 38, 38], outline='white', width=3)
+    draw.line([35, 35, 50, 50], fill='white', width=3)
+
+    # 保存到临时文件
+    icon_path = Path(tempfile.gettempdir()) / f"qingqinghelper_icon_{color.replace('#', '')}.png"
+    image.save(str(icon_path))
+    return str(icon_path)
+
 def update_tray_icon(status='running'):
+    """更新托盘图标状态"""
     global tray_icon
-    
+
     if tray_icon is None:
         return
-    
+
     if status == 'running':
-        icon_image = create_icon_image('#4caf50')
+        color = '#4caf50'
         title = f'{APP_NAME} - 运行中 (端口:{server_port})'
     elif status == 'error':
-        icon_image = create_icon_image('#f44336')
+        color = '#f44336'
         title = f'{APP_NAME} - 错误'
     else:
-        icon_image = create_icon_image('#9e9e9e')
+        color = '#9e9e9e'
         title = f'{APP_NAME} - 已停止'
-    
+
     try:
-        tray_icon.icon = icon_image
-        tray_icon.title = title
-    except:
-        pass
+        if system == 'Darwin':  # macOS rumps
+            tray_icon.icon = create_icon_image_path(color)
+            tray_icon.title = title
+        elif system == 'Windows':  # Windows pystray
+            tray_icon.icon = create_icon_image(color)
+            tray_icon.title = title
+    except Exception as e:
+        logger.warning(f"更新托盘图标失败: {e}")
 
 def on_toggle_autostart(icon, item):
     global autostart_enabled
@@ -1396,11 +1524,21 @@ def on_toggle_autostart(icon, item):
     set_autostart(autostart_enabled)
     item.checked = autostart_enabled
 
+def open_directory(path):
+    """跨平台打开目录"""
+    path = str(path)
+    if system == 'Darwin':  # macOS
+        subprocess.Popen(['open', path])
+    elif system == 'Windows':
+        os.startfile(path)
+    else:  # Linux
+        subprocess.Popen(['xdg-open', path])
+
 def on_open_folder(icon, item):
-    os.startfile(str(IMAGES_DIR))
+    open_directory(IMAGES_DIR)
 
 def on_open_logs(icon, item):
-    os.startfile(str(LOGS_DIR))
+    open_directory(LOGS_DIR)
 
 def on_restart(icon, item):
     global server_running
@@ -1438,32 +1576,81 @@ def start_flask_server():
     server_running = True
 
 def create_tray_icon():
+    """创建系统托盘图标（跨平台）"""
     global tray_icon, autostart_enabled
-    
-    import pystray
-    
+
     autostart_enabled = is_autostart_enabled()
-    
-    menu = pystray.Menu(
-        pystray.MenuItem('开机自启', on_toggle_autostart, checked=lambda item: autostart_enabled),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem('打开图片目录', on_open_folder),
-        pystray.MenuItem('打开日志目录', on_open_logs),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem('重启服务', on_restart),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem('退出', on_exit)
-    )
-    
-    icon_image = create_icon_image('#4caf50')
-    
-    tray_icon = pystray.Icon(
-        name=APP_NAME,
-        icon=icon_image,
-        title=f'{APP_NAME} - 启动中...',
-        menu=menu
-    )
-    
+
+    if system == 'Darwin':  # macOS - 使用 rumps
+        import rumps
+
+        class TrayApp(rumps.App):
+            def __init__(self):
+                super().__init__(APP_NAME, icon=create_icon_image_path('#4caf50'))
+                self._autostart_enabled = is_autostart_enabled()
+                self.menu = [
+                    rumps.MenuItem('开机自启', callback=self.toggle_autostart),
+                    None,  # 分隔符
+                    rumps.MenuItem('打开图片目录', callback=self.open_images),
+                    rumps.MenuItem('打开日志目录', callback=self.open_logs),
+                    None,
+                    rumps.MenuItem('重启服务', callback=self.restart),
+                    None,
+                    rumps.MenuItem('退出', callback=self.quit),
+                ]
+                self._update_autostart_checkmark()
+
+            def _update_autostart_checkmark(self):
+                """更新开机自启菜单项的勾选状态"""
+                item = self.menu['开机自启']
+                if self._autostart_enabled:
+                    item.state = 1
+                else:
+                    item.state = 0
+
+            def toggle_autostart(self, sender):
+                self._autostart_enabled = not self._autostart_enabled
+                set_autostart(self._autostart_enabled)
+                self._update_autostart_checkmark()
+
+            def open_images(self, sender):
+                open_directory(IMAGES_DIR)
+
+            def open_logs(self, sender):
+                open_directory(LOGS_DIR)
+
+            def restart(self, sender):
+                on_restart(None, None)
+
+            def quit(self, sender):
+                on_exit(None, None)
+                rumps.quit_application()
+
+        tray_icon = TrayApp()
+
+    elif system == 'Windows':  # Windows - 使用 pystray
+        import pystray
+
+        menu = pystray.Menu(
+            pystray.MenuItem('开机自启', on_toggle_autostart, checked=lambda item: autostart_enabled),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('打开图片目录', on_open_folder),
+            pystray.MenuItem('打开日志目录', on_open_logs),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('重启服务', on_restart),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('退出', on_exit)
+        )
+
+        icon_image = create_icon_image('#4caf50')
+
+        tray_icon = pystray.Icon(
+            name=APP_NAME,
+            icon=icon_image,
+            title=f'{APP_NAME} - 启动中...',
+            menu=menu
+        )
+
     return tray_icon
 
 # ==================== 主入口 ====================
@@ -1484,21 +1671,13 @@ def main():
     if is_port_in_use(server_port):
         msg = f"{APP_NAME} 已在运行中（端口 {server_port} 被占用）"
         print(msg)
-        try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(0, msg, APP_NAME, 0x40)
-        except:
-            pass
+        show_message_box(msg, "warning")
         sys.exit(0)
-    
+
     if not DEPENDENCIES_OK:
         msg = "错误: 缺少必要的依赖库"
         print(msg)
-        try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(0, msg, APP_NAME, 0x10)
-        except:
-            pass
+        show_message_box(msg, "error")
         sys.exit(1)
     
     logger.info("=" * 50)

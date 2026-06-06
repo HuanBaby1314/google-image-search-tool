@@ -36,8 +36,10 @@ chrome-extension/.vscode/
 
 # Local Server
 local-server/venv/
+local-server/.venv/
 local-server/build/
 local-server/dist/
+local-server/images/
 local-server/__pycache__/
 local-server/*.pyc
 
