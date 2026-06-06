@@ -1,1034 +1,904 @@
-// popup.js - 弹出界面逻辑
-
-let images = [];
-let downloadedFiles = [];
-let serverOnline = false;
-let statusUpdateInterval = null;
-let isSearching = false;
-let debugMode = false;
-let previewVisible = false;
-
-// ==================== Toast通知 ====================
-
-let currentToast = null;
-
-function showToast(message, type = 'info') {
-  const container = document.getElementById('toastContainer');
-  
-  // 移除之前的toast
-  if (currentToast && currentToast.parentNode) {
-    currentToast.parentNode.removeChild(currentToast);
-  }
-  
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.textContent = message;
-  container.appendChild(toast);
-  currentToast = toast;
-  
-  // 5秒后移除
-  setTimeout(() => {
-    if (toast.parentNode) {
-      toast.parentNode.removeChild(toast);
-    }
-    if (currentToast === toast) {
-      currentToast = null;
-    }
-  }, 5000);
-}
-
-// ==================== 工具函数 ====================
-
-function getTodayDir() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}${month}${day}`;
-}
-
-// ==================== 调试模式 ====================
-
-function toggleDebugMode() {
-  debugMode = !debugMode;
-  const panel = document.getElementById('debugPanel');
-  const mainContent = document.getElementById('mainContent');
-  const toggle = document.getElementById('debugToggle');
-  
-  if (debugMode) {
-    panel.classList.add('visible');
-    mainContent.style.display = 'none';
-    toggle.classList.add('active');
-    debugLog('调试模式已启用', 'info');
-  } else {
-    panel.classList.remove('visible');
-    mainContent.style.display = 'block';
-    toggle.classList.remove('active');
-  }
-}
-
-function debugLog(message, type = 'info') {
-  const log = document.getElementById('debugLog');
-  if (!log) return;
-  
-  const entry = document.createElement('div');
-  entry.className = `debug-log-entry ${type}`;
-  const time = new Date().toLocaleTimeString();
-  entry.textContent = `[${time}] ${message}`;
-  log.appendChild(entry);
-  log.scrollTop = log.scrollHeight;
-}
-
-function debugClearLog() {
-  const log = document.getElementById('debugLog');
-  if (log) {
-    log.innerHTML = '<div class="debug-log-entry info">日志已清空</div>';
-  }
-}
-
-function updateStepStatus(step, status) {
-  const stepEl = document.querySelector(`.debug-step[data-step="${step}"]`);
-  if (stepEl) {
-    stepEl.classList.remove('active', 'success', 'error');
-    if (status) stepEl.classList.add(status);
-  }
-}
-
-function getCustomSelector() {
-  return document.getElementById('debugSelector')?.value?.trim() || '';
-}
-
-function getTextFilter() {
-  return document.getElementById('debugTextFilter')?.value?.trim() || '';
-}
-
-function getDebugFilename() {
-  return document.getElementById('debugFilename')?.value?.trim() || '';
-}
-
-async function debugTestSelector() {
-  const selector = getCustomSelector();
-  const textFilter = getTextFilter();
-  
-  if (!selector && !textFilter) {
-    debugLog('请输入选择器或文本内容', 'warn');
-    return;
-  }
-
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (sel, txt) => {
-        let elements = [];
-        if (sel) {
-          try { elements = Array.from(document.querySelectorAll(sel)); } catch (e) {}
-        }
-        if (txt) {
-          const matches = Array.from(document.querySelectorAll('*')).filter(el => {
-            const text = el.textContent || '';
-            return text.includes(txt) && text.length < 100;
-          });
-          elements = elements.length > 0 ? elements.filter(el => matches.includes(el)) : matches;
-        }
-        return {
-          count: elements.length,
-          elements: elements.slice(0, 5).map(el => ({
-            tag: el.tagName.toLowerCase(),
-            text: (el.textContent || '').trim().substring(0, 50)
-          }))
-        };
-      },
-      args: [selector, textFilter],
-      world: 'MAIN'
-    });
-
-    const result = results[0]?.result;
-    if (result) {
-      debugLog(`找到 ${result.count} 个元素`, result.count > 0 ? 'success' : 'warn');
-      result.elements?.forEach((el, i) => {
-        debugLog(`  [${i}] ${el.tag} - "${el.text}"`, 'info');
-      });
-    }
-  } catch (error) {
-    debugLog(`测试失败: ${error.message}`, 'error');
-  }
-}
-
-async function debugInspectPage() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => {
-        const buttons = [];
-        document.querySelectorAll('div[role="button"], button, a, span[role="button"]').forEach(el => {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            buttons.push({
-              tag: el.tagName.toLowerCase(),
-              text: (el.textContent || '').trim().substring(0, 50),
-              aria: el.getAttribute('aria-label') || ''
-            });
-          }
-        });
-        return { url: window.location.href, title: document.title, buttons: buttons.slice(0, 20) };
-      },
-      world: 'MAIN'
-    });
-
-    const result = results[0]?.result;
-    if (result) {
-      debugLog('页面检查:', 'info');
-      debugLog(`  URL: ${result.url}`, 'info');
-      debugLog(`  标题: ${result.title}`, 'info');
-      result.buttons.forEach((btn, i) => {
-        debugLog(`  [${i}] ${btn.tag} - "${btn.text}"`, 'info');
-      });
-    }
-  } catch (error) {
-    debugLog(`检查失败: ${error.message}`, 'error');
-  }
-}
-
-async function debugRunStep(step) {
-  debugLog(`执行步骤 ${step}...`, 'info');
-  updateStepStatus(step, 'active');
-  
-  try {
-    switch (step) {
-      case 1: await debugStep1(); break;
-      case 2: await debugStep2(); break;
-      case 3: await debugStep3(); break;
-      case 4: await debugStep4(); break;
-      default: debugLog('未知步骤', 'error');
-    }
-    updateStepStatus(step, 'success');
-  } catch (error) {
-    debugLog(`步骤 ${step} 失败: ${error.message}`, 'error');
-    updateStepStatus(step, 'error');
-  }
-}
-
-async function debugStep1() {
-  await chrome.tabs.create({ url: 'https://www.google.com/imghp', active: true });
-  await new Promise(r => setTimeout(r, 2000));
-  debugLog('Google搜图页面已打开', 'success');
-}
-
-async function debugStep2() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const result = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => {
-      const el = document.querySelector('div[aria-label="按图搜索"], div[aria-label="Search by image"]');
-      if (el) { el.click(); return { success: true }; }
-      return { success: false, error: '未找到' };
+const PRESET_CONFIG = {
+    "shutterstock": {
+        "seq": 0,
+        "key": "shutterstock",
+        "name": "Shutterstock",
+        "color": "#333333",
+        "url": "https://www.shutterstock.com/zh/image-photo/{id}",
+        "selector": "#main-content [data-automation=\"ContributorDetails\"] span:nth-child(2)"
     },
-    world: 'MAIN'
-  });
-  if (result[0]?.result?.success) debugLog('点击成功', 'success');
-  else throw new Error('点击失败');
-}
-
-async function debugStep3() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const result = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: () => {
-      const spans = document.querySelectorAll('span');
-      for (const span of spans) {
-        if (span.textContent?.trim() === '上传文件') {
-          span.click();
-          return { success: true };
-        }
-      }
-      return { success: false, error: '未找到' };
-    },
-    world: 'MAIN'
-  });
-  if (result[0]?.result?.success) debugLog('点击成功', 'success');
-  else throw new Error('点击失败');
-}
-
-async function debugStep4() {
-  const serverUrl = document.getElementById('serverUrl').value;
-  const filename = getDebugFilename();
-  if (!filename) throw new Error('请输入文件名');
-  
-  const response = await fetch(`${serverUrl}/api/select-file-and-upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename }),
-    signal: AbortSignal.timeout(30000)
-  });
-  const result = await response.json();
-  if (result.success) debugLog('文件选择成功', 'success');
-  else throw new Error(result.error);
-}
-
-// ==================== 初始化 ====================
-
-function checkScriptingAPI() {
-  return !!(chrome.scripting && chrome.scripting.executeScript);
-}
-
-async function saveState() {
-  await chrome.storage.local.set({ images, downloadedFiles, lastScanTime: Date.now() });
-}
-
-async function restoreState() {
-  const saved = await chrome.storage.local.get(['images', 'downloadedFiles', 'lastScanTime']);
-  
-  if (saved.images?.length > 0) images = saved.images;
-  if (saved.downloadedFiles) downloadedFiles = saved.downloadedFiles;
-  
-  renderImageList();
-  updateButtons();
-  updateDownloadCount();
-}
-
-function updateDownloadCount() {
-  const countEl = document.getElementById('downloadCount');
-  const clearBtn = document.getElementById('clearDownloadBtn');
-  
-  if (countEl) {
-    countEl.textContent = downloadedFiles.length > 0 ? `已下载: ${downloadedFiles.length} 张` : '';
-  }
-  if (clearBtn) {
-    clearBtn.style.display = downloadedFiles.length > 0 ? 'block' : 'none';
-  }
-}
-
-function isImageDownloaded(imageSrc) {
-  return downloadedFiles.some(f => f.url === imageSrc);
-}
-
-// 初始化
-document.addEventListener('DOMContentLoaded', async () => {
-  const settings = await chrome.storage.local.get(['serverUrl']);
-  if (settings.serverUrl) {
-    document.getElementById('serverUrl').value = settings.serverUrl;
-  }
-
-  // 按钮事件
-  document.getElementById('scanBtn').addEventListener('click', scanImages);
-  document.getElementById('selectLocalBtn').addEventListener('click', selectLocalImages);
-  document.getElementById('clearImagesBtn').addEventListener('click', clearImages);
-  document.getElementById('downloadBtn').addEventListener('click', downloadSelected);
-  document.getElementById('searchBtn').addEventListener('click', startGoogleSearch);
-  document.getElementById('amazonSearchBtn').addEventListener('click', startAmazonSearch);
-  document.getElementById('selectAll').addEventListener('change', toggleSelectAll);
-  document.getElementById('clearDownloadBtn').addEventListener('click', clearDownloadedFiles);
-  
-  // 调试按钮
-  document.getElementById('debugToggle').addEventListener('click', toggleDebugMode);
-  document.getElementById('debugTestSelectorBtn').addEventListener('click', debugTestSelector);
-  document.getElementById('debugInspectPageBtn').addEventListener('click', debugInspectPage);
-  document.getElementById('debugClearLogBtn').addEventListener('click', debugClearLog);
-  
-  document.querySelectorAll('[data-step-btn]').forEach(btn => {
-    btn.addEventListener('click', () => debugRunStep(parseInt(btn.getAttribute('data-step-btn'))));
-  });
-
-  // 预览关闭
-  document.getElementById('previewClose').addEventListener('click', hidePreview);
-  document.getElementById('previewOverlay').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) hidePreview();
-  });
-
-  // 监听background消息
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'searchProgress') {
-      showToast(`搜图进度: ${message.current}/${message.total} - ${message.filename}`, 'info');
+    "123rf": {
+        "seq": 1,
+        "key": "123rf",
+        "name": "123rf",
+        "color": "#ff9900",
+        "url": "https://www.123rf.com/photo_{id}.html",
+        "selector": ".ImageDetailsInfo__contributor--name a, .ImageDetails__information--link"
     }
-    if (message.type === 'searchSkipped') {
-      showToast(`跳过 ${message.count} 张已搜图的图片`, 'info');
-    }
-    if (message.type === 'searchComplete') {
-      isSearching = false;
-      const msg = message.failCount > 0 
-        ? `搜图完成: ${message.successCount} 成功, ${message.failCount} 失败`
-        : `全部 ${message.successCount} 张图片搜图完成!`;
-      showToast(msg, message.failCount > 0 ? 'info' : 'success');
-      updateButtons();
-      // 恢复按钮文本
-      document.getElementById('searchBtn').textContent = 'Google搜图';
-      document.getElementById('amazonSearchBtn').textContent = 'Amazon搜图';
-    }
-    if (message.type === 'searchError') {
-      isSearching = false;
-      showToast('搜图失败: ' + message.error, 'error');
-      updateButtons();
-      // 恢复按钮文本
-      document.getElementById('searchBtn').textContent = 'Google搜图';
-      document.getElementById('amazonSearchBtn').textContent = 'Amazon搜图';
-    }
-  });
+};
 
-  // 状态指示器点击启动服务
-  document.getElementById('serverStatusMini').addEventListener('click', onStatusClick);
+let CONFIG = {};
 
-  startStatusListener();
-  restoreState();
-  
-  if (!checkScriptingAPI()) {
-    showToast('警告: scripting API不可用', 'error');
-  }
-});
-
-// 清除图片列表
-function clearImages() {
-  images = [];
-  renderImageList();
-  updateButtons();
-  saveState();
-  showToast('已清除图片列表', 'info');
+function getSortedConfig() {
+    return Object.values(CONFIG).sort((a, b) => (a.seq || 0) - (b.seq || 0));
 }
 
-// 选择本地图片
-async function selectLocalImages() {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.multiple = true;
-  input.accept = 'image/*';
-  
-  input.onchange = async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
-    
-    let addedCount = 0;
-    const serverUrl = document.getElementById('serverUrl').value;
-    
-    for (const file of files) {
-      if (images.some(img => img.filename === file.name && img.source === 'local')) {
-        continue;
-      }
-      
-      try {
-        // 读取文件为base64
-        const base64 = await readFileAsBase64(file);
-        
-        // 上传到服务器
-        const response = await fetch(`${serverUrl}/api/save-local-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            fileData: base64
-          }),
-          signal: AbortSignal.timeout(10000)
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-          // 使用服务器返回的URL访问图片
-          const imageUrl = `${serverUrl}${result.url}`;
-          const dimensions = await getImageDimensions(imageUrl);
-          
-          images.push({
-            src: imageUrl,
-            filename: file.name,
-            width: dimensions.width,
-            height: dimensions.height,
-            alt: file.name,
-            source: 'local',
-            isLocal: true
-          });
-          
-          addedCount++;
-        } else {
-          showToast(`上传失败: ${file.name}`, 'error');
-        }
-      } catch (error) {
-        console.error('上传本地图片失败:', error);
-        showToast(`上传失败: ${file.name}`, 'error');
-      }
-    }
-    
-    if (addedCount > 0) {
-      renderImageList();
-      updateButtons();
-      await saveState();
-      showToast(`已添加 ${addedCount} 张本地图片`, 'success');
-    } else {
-      showToast('没有新图片添加', 'info');
-    }
-  };
-  
-  input.click();
-}
-
-// 读取文件为base64
-function readFileAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-function getImageDimensions(url) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: 0, height: 0 });
-    img.src = url;
-  });
-}
-
-async function clearDownloadedFiles() {
-  downloadedFiles = [];
-  await saveState();
-  updateButtons();
-  updateDownloadCount();
-  renderImageList();
-  showToast('已清空下载记录', 'info');
-}
-
-function startStatusListener() {
-  updateStatusFromStorage();
-  statusUpdateInterval = setInterval(updateStatusFromStorage, 2000);
-}
-
-async function updateStatusFromStorage() {
-  try {
-    const result = await chrome.storage.local.get(['serverStatus']);
-    const status = result.serverStatus;
-    if (status) {
-      serverOnline = status.online;
-      updateStatusUI(status);
-      updateButtons();
-    }
-  } catch (error) {}
-}
-
-function updateStatusUI(status) {
-  const dot = document.getElementById('statusDot');
-  const label = document.getElementById('statusLabel');
-  const footer = document.getElementById('status');
-  const statusMini = document.getElementById('serverStatusMini');
-
-  if (status.online) {
-    dot.className = 'status-dot online';
-    label.textContent = '在线';
-    footer.textContent = '服务在线';
-    footer.className = 'status success';
-    statusMini.classList.remove('clickable');
-    statusMini.title = '';
-  } else {
-    dot.className = 'status-dot offline';
-    label.textContent = '离线';
-    footer.textContent = '服务离线 - 点击状态栏启动服务';
-    footer.className = 'status error';
-    statusMini.classList.add('clickable');
-    statusMini.title = '点击启动本地服务';
-  }
-}
-
-// 离线状态点击：通过自定义协议启动服务
-function onStatusClick() {
-  if (serverOnline) return;
-
-  showToast('正在启动本地服务...', 'info');
-
-  // 用新 tab 触发协议，避免确认弹窗被 popup 遮挡
-  // 服务上线后 WebSocket 会自动重连，状态会实时更新
-  chrome.tabs.create({ url: 'qqhelpr://start', active: true });
-}
-
-// ==================== 扫描图片 ====================
-
-async function scanImages() {
-  const scanBtn = document.getElementById('scanBtn');
-  scanBtn.disabled = true;
-
-  try {
-    if (!checkScriptingAPI()) throw new Error('scripting API不可用');
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || 
-        tab.url.startsWith('chrome-extension://')) {
-      showToast('无法在此页面使用，请打开普通网页', 'error');
-      return;
-    }
-
-    showToast('正在扫描图片...', 'info');
-
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: scanPageImages,
-      world: 'MAIN'
-    });
-
-    if (results?.[0]?.result) {
-      images = results[0].result;
-    } else {
-      images = [];
-    }
-
-    renderImageList();
-    updateButtons();
-    await saveState();
-    showToast(`找到 ${images.length} 张图片`, 'success');
-
-  } catch (error) {
-    showToast('扫描失败: ' + error.message, 'error');
-  } finally {
-    scanBtn.disabled = false;
-  }
-}
-
-function scanPageImages() {
-  const images = [];
-  const seen = new Set();
-
-  function cleanUrl(url) {
-    if (!url) return null;
-    url = url.trim();
-    if (url.startsWith('data:') && url.length < 2000) return null;
-    if (url.startsWith('javascript:') || url === 'about:blank') return null;
-    try { return new URL(url, window.location.href).href; } catch { return null; }
-  }
-
-  function isImageUrl(url) {
-    if (!url) return false;
-    if (url.includes('.svg') || url.includes('svg+xml')) return false;
-    return /\.(jpg|jpeg|png|gif|webp|bmp|ico|tiff|avif)(\?.*)?$/i.test(url);
-  }
-
-  function addImage(src, width, height, alt, source) {
-    if (!src) return;
-    const cleanSrc = cleanUrl(src);
-    if (!cleanSrc || seen.has(cleanSrc)) return;
-    if (cleanSrc.length < 10) return;
-    if (cleanSrc.includes('.svg') || cleanSrc.includes('svg+xml')) return;
-    if (width > 0 && width < 50) return;
-    if (height > 0 && height < 50) return;
-    if (width === 1 || height === 1) return;
-    
-    seen.add(cleanSrc);
-
-    let filename = '';
-    try {
-      const url = new URL(cleanSrc);
-      filename = decodeURIComponent(url.pathname.split('/').pop() || '');
-      filename = filename.split('?')[0].split('#')[0];
-    } catch { filename = ''; }
-
-    if (!filename || !filename.includes('.') || filename.length < 3) {
-      const ext = cleanSrc.match(/\.(jpg|jpeg|png|gif|webp|bmp)(\?|$)/i)?.[1] || 'jpg';
-      filename = `image_${images.length}.${ext}`;
-    }
-
-    filename = filename.replace(/[<>:"/\\|?*]/g, '_');
-
-    images.push({
-      src: cleanSrc,
-      filename: filename,
-      width: width || 0,
-      height: height || 0,
-      alt: alt || '',
-      source: source || 'unknown'
-    });
-  }
-
-  document.querySelectorAll('img').forEach(img => {
-    const attrs = ['src', 'data-src', 'data-original', 'data-lazy-src', 'data-image-src', 'data-image'];
-    let src = null;
-    for (const attr of attrs) {
-      const val = img.getAttribute(attr);
-      if (val && val.length > 10 && !val.startsWith('data:') && !val.includes('.svg')) {
-        src = val;
-        break;
-      }
-    }
-    if (!src) src = img.src;
-    if (!src && img.srcset) {
-      const parts = img.srcset.split(',');
-      if (parts.length > 0) src = parts[parts.length - 1].trim().split(/\s+/)[0];
-    }
-    if (src && !src.includes('.svg')) {
-      const w = img.naturalWidth || img.width || parseInt(img.getAttribute('width')) || 0;
-      const h = img.naturalHeight || img.height || parseInt(img.getAttribute('height')) || 0;
-      addImage(src, w, h, img.alt || img.title || '', 'img');
-    }
-  });
-
-  document.querySelectorAll('*').forEach(el => {
-    try {
-      const bg = window.getComputedStyle(el).backgroundImage;
-      if (bg && bg !== 'none' && bg.includes('url(')) {
-        const matches = bg.matchAll(/url\(["']?([^"')]+)["']?\)/g);
-        for (const m of matches) {
-          if (m[1] && !m[1].startsWith('data:') && !m[1].includes('.svg')) {
-            addImage(m[1], 0, 0, '', 'background');
-          }
-        }
-      }
-    } catch (e) {}
-  });
-
-  document.querySelectorAll('a[href]').forEach(link => {
-    if (isImageUrl(link.href)) addImage(link.href, 0, 0, link.title || '', 'link');
-  });
-
-  document.querySelectorAll('meta[property="og:image"]').forEach(meta => {
-    const c = meta.getAttribute('content');
-    if (c && !c.includes('.svg')) addImage(c, 0, 0, '', 'meta');
-  });
-
-  function scanShadowRoots(root) {
-    root.querySelectorAll('*').forEach(el => {
-      if (el.shadowRoot) {
-        el.shadowRoot.querySelectorAll('img').forEach(img => {
-          if (img.src && !img.src.includes('.svg')) {
-            addImage(img.src, img.naturalWidth, img.naturalHeight, img.alt || '', 'shadow');
-          }
-        });
-        scanShadowRoots(el.shadowRoot);
-      }
-    });
-  }
-  scanShadowRoots(document);
-
-  return images;
-}
-
-// ==================== 渲染UI ====================
-
-function renderImageList() {
-  const list = document.getElementById('imageList');
-  const count = document.getElementById('imageCount');
-
-  if (images.length === 0) {
-    list.innerHTML = '<div style="text-align: center; color: #999; padding: 20px;">暂无图片<br><small>点击扫描或选择本地图片</small></div>';
-    count.textContent = '0 张图片';
-    return;
-  }
-
-  const sources = {};
-  images.forEach(img => {
-    sources[img.source] = (sources[img.source] || 0) + 1;
-  });
-
-  list.innerHTML = `
-    <div style="font-size: 11px; color: #666; padding: 4px; margin-bottom: 4px; background: #f0f0f0; border-radius: 4px;">
-      来源: ${Object.entries(sources).map(([k, v]) => `${k}(${v})`).join(', ')}
-    </div>
-    ${images.map((img, index) => {
-      const isLocal = img.source === 'local';
-      const downloaded = isImageDownloaded(img.src);
-      let statusClass = 'pending';
-      let statusText = '待下载';
-      
-      if (isLocal) {
-        statusClass = 'local';
-        statusText = '本地';
-      } else if (downloaded) {
-        statusClass = 'downloaded';
-        statusText = '已下载';
-      }
-      
-      return `
-        <div class="image-item" data-index="${index}">
-          <input type="checkbox" class="image-checkbox" data-index="${index}" checked>
-          <span class="filename" title="${img.src}">${img.filename}</span>
-          <span class="size">${img.width > 0 ? img.width + 'x' + img.height : ''}</span>
-          <span class="status ${statusClass}">${statusText}</span>
-          <div class="preview-trigger" data-src="${img.src}" data-filename="${img.filename}" data-width="${img.width}" data-height="${img.height}">
-            <img src="${img.src}" alt="${img.alt}" loading="lazy">
-          </div>
-        </div>
-      `;
-    }).join('')}
-  `;
-
-  count.textContent = `${images.length} 张图片`;
-
-  list.querySelectorAll('.image-checkbox').forEach(cb => {
-    cb.addEventListener('change', updateButtons);
-  });
-
-  list.querySelectorAll('.preview-trigger').forEach(trigger => {
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      showPreview(e.currentTarget);
-    });
-  });
-}
-
-function showPreview(element) {
-  if (previewVisible) {
-    hidePreview();
-    return;
-  }
-
-  const overlay = document.getElementById('previewOverlay');
-  const previewImg = document.getElementById('previewImage');
-  const previewInfo = document.getElementById('previewInfo');
-  
-  previewImg.src = element.getAttribute('data-src');
-  previewInfo.textContent = `${element.getAttribute('data-filename')} (${element.getAttribute('data-width')}x${element.getAttribute('data-height')})`;
-  
-  overlay.style.display = 'flex';
-  previewVisible = true;
-}
-
-function hidePreview() {
-  document.getElementById('previewOverlay').style.display = 'none';
-  previewVisible = false;
-}
-
-function toggleSelectAll(e) {
-  document.querySelectorAll('.image-checkbox').forEach(cb => { cb.checked = e.target.checked; });
-  updateButtons();
-}
-
-function updateButtons() {
-  const checked = document.querySelectorAll('.image-checkbox:checked');
-  const hasSelection = checked.length > 0;
-  
-  // 扫描按钮 - 始终可用
-  document.getElementById('scanBtn').disabled = false;
-  
-  // 选择本地图片 - 始终可用
-  document.getElementById('selectLocalBtn').disabled = false;
-  
-  // 清除按钮 - 有图片时可用
-  document.getElementById('clearImagesBtn').disabled = images.length === 0;
-  
-  // 下载按钮 - 有选中图片时可用
-  document.getElementById('downloadBtn').disabled = !hasSelection || isSearching;
-  
-  // 搜图按钮 - 有选中图片且服务器在线时可用
-  document.getElementById('searchBtn').disabled = !hasSelection || !serverOnline || isSearching;
-  
-  // Amazon搜图按钮 - 有选中图片且服务器在线时可用
-  document.getElementById('amazonSearchBtn').disabled = !hasSelection || !serverOnline || isSearching;
-}
-
-function getSelectedImages() {
-  const checkboxes = document.querySelectorAll('.image-checkbox:checked');
-  return Array.from(checkboxes).map(cb => images[parseInt(cb.dataset.index)]);
-}
-
-// ==================== 下载 ====================
-
-async function downloadSelected() {
-  const selected = getSelectedImages();
-  if (selected.length === 0) return;
-
-  const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
-  
-  if (toDownload.length === 0) {
-    showToast('选中的图片无需下载', 'info');
-    return;
-  }
-
-  const downloadBtn = document.getElementById('downloadBtn');
-  downloadBtn.disabled = true;
-
-  const progressSection = document.getElementById('progressSection');
-  progressSection.style.display = 'block';
-
-  let completed = 0;
-  let failed = 0;
-  const newFiles = [];
-
-  for (const img of toDownload) {
-    try {
-      const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
-      
-      const downloadId = await chrome.downloads.download({
-        url: img.src,
-        filename: downloadPath,
-        saveAs: false
-      });
-
-      await waitForDownload(downloadId);
-      newFiles.push({ filename: img.filename, url: img.src });
-      completed++;
-      updateProgress(completed, toDownload.length);
-    } catch (error) {
-      console.error('下载失败:', img.src, error);
-      failed++;
-    }
-  }
-
-  downloadedFiles = [...downloadedFiles, ...newFiles];
-
-  const message = failed > 0 
-    ? `下载完成: ${completed} 成功, ${failed} 失败`
-    : `成功下载 ${completed} 张图片`;
-  
-  showToast(message, failed > 0 ? 'info' : 'success');
-  updateButtons();
-  updateDownloadCount();
-  renderImageList();
-  await saveState();
-
-  setTimeout(() => {
-    downloadBtn.disabled = false;
-    progressSection.style.display = 'none';
-  }, 3000);
-}
-
-function waitForDownload(downloadId) {
-  return new Promise((resolve, reject) => {
-    const listener = (delta) => {
-      if (delta.id === downloadId) {
-        if (delta.state?.current === 'complete') {
-          chrome.downloads.onChanged.removeListener(listener);
-          resolve();
-        }
-        if (delta.error) {
-          chrome.downloads.onChanged.removeListener(listener);
-          reject(new Error(delta.error.current));
-        }
-      }
-    };
-    chrome.downloads.onChanged.addListener(listener);
+function showToast(msg) {
+    let oldToast = document.getElementById('global-toast');
+    if (oldToast) oldToast.remove();
+    const toast = document.createElement('div');
+    toast.id = 'global-toast';
+    toast.innerHTML = msg.replace(/\n/g, '<br/>');
+    toast.style.cssText = "position:fixed; top:20px; left:50%; transform:translate(-50%, -20px); background:rgba(0,0,0,0.8); color:#fff; padding:12px 24px; font-size:14px; border-radius:6px; z-index:9999999; transition:all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); pointer-events:none; box-shadow:0 6px 16px rgba(0,0,0,0.2); opacity:0; text-align:center; line-height:1.5;";
+    document.body.appendChild(toast);
     setTimeout(() => {
-      chrome.downloads.onChanged.removeListener(listener);
-      reject(new Error('下载超时'));
-    }, 60000);
-  });
+        toast.style.transform = "translate(-50%, 0)";
+        toast.style.opacity = '1';
+    }, 10);
+    setTimeout(() => {
+        toast.style.transform = "translate(-50%, -20px)";
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    }, 2500);
 }
 
-function updateProgress(current, total) {
-  const percent = Math.round((current / total) * 100);
-  document.getElementById('progressFill').style.width = percent + '%';
-  document.getElementById('progressText').textContent = `${current} / ${total}`;
-}
-
-// ==================== Google搜图 ====================
-
-async function startGoogleSearch() {
-  const selected = getSelectedImages();
-  if (selected.length === 0) {
-    showToast('请先选择图片', 'error');
-    return;
-  }
-
-  if (!serverOnline) {
-    showToast('服务器未连接，请先启动本地服务器', 'error');
-    return;
-  }
-
-  if (isSearching) {
-    showToast('正在处理中，请等待...', 'info');
-    return;
-  }
-
-  isSearching = true;
-  const btn = document.getElementById('searchBtn');
-  btn.disabled = true;
-  btn.textContent = '处理中...';
-  
-  // 先下载未下载的图片
-  const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
-  
-  if (toDownload.length > 0) {
-    showToast(`正在下载 ${toDownload.length} 张图片...`, 'info');
-    
-    for (const img of toDownload) {
-      try {
-        const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
-        const downloadId = await chrome.downloads.download({
-          url: img.src,
-          filename: downloadPath,
-          saveAs: false
-        });
-        await waitForDownload(downloadId);
-        downloadedFiles.push({ filename: img.filename, url: img.src });
-      } catch (error) {
-        console.error('下载失败:', img.src, error);
-      }
+document.addEventListener('DOMContentLoaded', async () => {
+    const manifest = chrome.runtime.getManifest();
+    const appTitle = document.getElementById('appTitle');
+    if (appTitle && manifest.name) {
+        // Automatically inject the extension name defined in manifest.json
+        appTitle.innerHTML = `🚀 ${manifest.name}`;
     }
-    
-    await saveState();
-    updateDownloadCount();
-    renderImageList();
-  }
-  
-  showToast('开始搜图流程...', 'info');
 
-  chrome.runtime.sendMessage({
-    action: 'startGoogleSearch',
-    images: selected.map(img => ({
-      filename: img.filename,
-      isLocal: img.source === 'local'
-    }))
-  });
-}
+    // Tab 切换逻辑
+    const tabItems = document.querySelectorAll('.tab-item');
+    const tabContents = document.querySelectorAll('.tab-content');
 
-// ==================== Amazon搜图 ====================
-
-async function startAmazonSearch() {
-  const selected = getSelectedImages();
-  if (selected.length === 0) {
-    showToast('请先选择图片', 'error');
-    return;
-  }
-
-  if (!serverOnline) {
-    showToast('服务器未连接，请先启动本地服务器', 'error');
-    return;
-  }
-
-  if (isSearching) {
-    showToast('正在处理中，请等待...', 'info');
-    return;
-  }
-
-  isSearching = true;
-  const btn = document.getElementById('amazonSearchBtn');
-  btn.disabled = true;
-  btn.textContent = '处理中...';
-  
-  // 先下载未下载的图片
-  const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
-  
-  if (toDownload.length > 0) {
-    showToast(`正在下载 ${toDownload.length} 张图片...`, 'info');
-    
-    for (const img of toDownload) {
-      try {
-        const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
-        const downloadId = await chrome.downloads.download({
-          url: img.src,
-          filename: downloadPath,
-          saveAs: false
-        });
-        await waitForDownload(downloadId);
-        downloadedFiles.push({ filename: img.filename, url: img.src });
-      } catch (error) {
-        console.error('下载失败:', img.src, error);
-      }
+    // 恢复上次的 tab 状态
+    const tabStorage = await chrome.storage.local.get(['activeTab']);
+    if (tabStorage.activeTab) {
+        tabItems.forEach(t => t.classList.remove('active'));
+        tabContents.forEach(c => c.classList.remove('active'));
+        const targetItem = document.querySelector(`.tab-item[data-tab="${tabStorage.activeTab}"]`);
+        const targetContent = document.getElementById(`tab-${tabStorage.activeTab}`);
+        if (targetItem && targetContent) {
+            targetItem.classList.add('active');
+            targetContent.classList.add('active');
+        }
     }
-    
-    await saveState();
-    updateDownloadCount();
-    renderImageList();
-  }
-  
-  showToast('开始Amazon搜图流程...', 'info');
 
-  chrome.runtime.sendMessage({
-    action: 'startAmazonSearch',
-    images: selected.map(img => ({
-      filename: img.filename,
-      isLocal: img.source === 'local'
-    }))
-  });
-}
+    tabItems.forEach(item => {
+        item.addEventListener('click', () => {
+            const targetTab = item.getAttribute('data-tab');
+            tabItems.forEach(t => t.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            item.classList.add('active');
+            document.getElementById(`tab-${targetTab}`).classList.add('active');
+            // 保存当前 tab 状态
+            chrome.storage.local.set({ activeTab: targetTab });
+        });
+    });
 
-window.addEventListener('unload', () => {
-  if (statusUpdateInterval) clearInterval(statusUpdateInterval);
+    // 读取配置和恢复状态
+    const raw = await chrome.storage.local.get(['customConfig', 'draftConfig', 'pickingFor', 'pickedSelector', 'savedData']);
+
+    if (raw.customConfig && Object.keys(raw.customConfig).length > 0) {
+        CONFIG = raw.customConfig;
+    } else {
+        CONFIG = JSON.parse(JSON.stringify(PRESET_CONFIG));
+    }
+
+    // --- 新增：自动恢复拾取状态 ---
+    if (raw.pickingFor) {
+        // 说明刚才用户点击了拾取，现在回来了
+        if (raw.draftConfig) {
+            CONFIG = raw.draftConfig; // 恢复草稿数据到当前内存
+        }
+        if (raw.pickedSelector) {
+            // 将点选到的选择器填充进去
+            if (!CONFIG[raw.pickingFor]) {
+                CONFIG[raw.pickingFor] = { key: raw.pickingFor, name: '', color: '#333', url: '', selector: '' };
+            }
+            CONFIG[raw.pickingFor].selector = raw.pickedSelector;
+        }
+        // 清理临时状态
+        await chrome.storage.local.remove(['pickingFor', 'pickedSelector', 'draftConfig']);
+        // 自动打开设置窗口
+        setTimeout(() => {
+            const btn = document.getElementById('settingsBtn');
+            if (btn) btn.click();
+        }, 150); // 略微延迟等弹窗绑定好
+    }
+    // ----------------------------
+
+    bindMainEvents();
+    bindSettingsEvents();
+
+    if (raw.savedData) {
+        renderAllRows(raw.savedData);
+    }
 });
+
+
+function bindMainEvents() {
+    const startBtn = document.getElementById('startBtn');
+    const resultBody = document.getElementById('resultBody');
+    const copyResultBtn = document.getElementById('copyResultBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const fullScreenBtn = document.getElementById('fullScreenBtn');
+
+    if (fullScreenBtn) fullScreenBtn.onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
+
+    // V2+: Global mixed input with preflight detection
+    const globalMixedInput = document.getElementById('globalMixedInput');
+    const globalPreview = document.getElementById('globalMixedPreview');
+    const unmatchedBox = document.getElementById('unmatchedBox');
+    const unmatchedList = document.getElementById('unmatchedList');
+
+    let debounceTimer;
+    globalMixedInput.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+            const val = globalMixedInput.value.trim();
+            if (!val) {
+                globalPreview.style.display = 'none';
+                unmatchedBox.style.display = 'none';
+                return;
+            }
+
+            const storage = await chrome.storage.local.get(['savedData']);
+            const currentData = storage.savedData || {};
+            const seenIdentifiers = new Set();
+
+            // 从历史记录中提取已成功的 ID 和 URL 用于去重
+            Object.values(currentData).forEach(item => {
+                if (item.status === "成功") {
+                    if (item.id && item.id !== 'link') seenIdentifiers.add(item.id);
+                    if (item.url) seenIdentifiers.add(item.url);
+                }
+            });
+
+            const lines = val.split('\n').filter(l => l.trim());
+            let previewHtml = "";
+            let unmatchedIds = [];
+            const activeSources = Object.keys(CONFIG);
+
+            for (const line of lines) {
+                const text = line.trim();
+
+                // 去重逻辑：检查原始输入字符串是否已存在
+                if (seenIdentifiers.has(text)) continue;
+
+                if (text.startsWith('http')) {
+                    // 提取 URL 中的 ID 用于交叉去重
+                    const idMatch = text.match(/(\d+)/);
+                    const extractedId = idMatch ? idMatch[0] : null;
+                    if (extractedId && seenIdentifiers.has(extractedId)) continue;
+
+                    let sourceName = "未知来源";
+                    for (const key in CONFIG) {
+                        try {
+                            const urlObj = new URL(text);
+                            const templateObj = new URL(CONFIG[key].url.replace('{id}', '123'));
+                            if (urlObj.hostname.includes(templateObj.hostname.replace('www.', ''))) {
+                                sourceName = CONFIG[key].name;
+                                break;
+                            }
+                        } catch (e) { }
+                    }
+
+                    try {
+                        const res = await fetch(text, { method: 'HEAD' });
+                        if (res.ok) {
+                            previewHtml += `<div style="margin-bottom:4px; font-size:11px;"><span style="color:#67c23a">[${sourceName}]</span> 🔗 <a href="${text}" target="_blank" style="color:#409eff;">${text}</a></div>`;
+                            seenIdentifiers.add(text);
+                            if (extractedId) seenIdentifiers.add(extractedId);
+                        } else {
+                            unmatchedIds.push(`失效链接: ${text}`);
+                        }
+                    } catch (e) {
+                        unmatchedIds.push(`无法访问: ${text}`);
+                    }
+                } else {
+                    const ids = text.match(/\d{8,}/g) || [];
+                    if (ids.length === 0 && text.match(/\d+/)) {
+                        unmatchedIds.push(`${text} (过短)`);
+                        continue;
+                    }
+
+                    for (const id of ids) {
+                        if (seenIdentifiers.has(id)) continue;
+
+                        let foundValidSource = false;
+                        for (const srcKey of activeSources) {
+                            const conf = CONFIG[srcKey];
+                            const testUrl = conf.url.replace('{id}', id);
+
+                            // 检查生成的 URL 是否已存在 (ID vs URL 去重)
+                            if (seenIdentifiers.has(testUrl)) {
+                                foundValidSource = true;
+                                seenIdentifiers.add(id); // 标记 ID 已处理
+                                break;
+                            }
+
+                            try {
+                                const res = await fetch(testUrl, { method: 'HEAD' });
+                                if (res.ok) {
+                                    previewHtml += `<div style="margin-bottom:4px; font-size:11px;"><span style="color:#67c23a">[${conf.name}]</span> 🆔 <a href="${testUrl}" target="_blank" style="color:#409eff;">${testUrl}</a></div>`;
+                                    foundValidSource = true;
+                                    seenIdentifiers.add(id);
+                                    seenIdentifiers.add(testUrl);
+                                    break;
+                                }
+                            } catch (e) { }
+                        }
+                        if (!foundValidSource) {
+                            unmatchedIds.push(id);
+                        }
+                    }
+                }
+            }
+
+            globalPreview.innerHTML = previewHtml || "未识别到匹配的有效链接";
+            globalPreview.style.display = previewHtml ? 'block' : 'none';
+
+            if (unmatchedIds.length > 0) {
+                unmatchedList.innerText = [...new Set(unmatchedIds)].join(', ');
+                unmatchedBox.style.display = 'block';
+            } else {
+                unmatchedBox.style.display = 'none';
+            }
+        }, 800);
+    });
+
+    startBtn.addEventListener('click', async () => {
+        const storage = await chrome.storage.local.get(['savedData']);
+        const currentData = storage.savedData || {};
+        const activeSources = Object.keys(CONFIG);
+
+        const globalVal = globalMixedInput.value;
+        let allTasks = [];
+        let currentOrder = Date.now();
+
+        // --- 全局去重集合 (ID和URL) ---
+        const seenIdentifiers = new Set();
+        // 初始化：将历史成功的 ID 和 URL 加入已见集合
+        Object.values(currentData).forEach(item => {
+            if (item.status === "成功") {
+                if (item.id && item.id !== 'link') seenIdentifiers.add(item.id);
+                if (item.url) seenIdentifiers.add(item.url);
+            }
+        });
+
+        // --- 1. 处理全局混合输入 ---
+        if (globalVal.trim()) {
+            const lines = globalVal.split('\n').filter(l => l.trim());
+            for (const line of lines) {
+                const text = line.trim();
+                if (seenIdentifiers.has(text)) continue;
+
+                if (text.startsWith('http')) {
+                    const idMatch = text.match(/(\d+)/);
+                    const extractedId = idMatch ? idMatch[0] : null;
+                    if (extractedId && seenIdentifiers.has(extractedId)) continue;
+
+                    let detectedSrc = null;
+                    for (const key in CONFIG) {
+                        try {
+                            const urlObj = new URL(text);
+                            const templateObj = new URL(CONFIG[key].url.replace('{id}', '123'));
+                            if (urlObj.hostname.includes(templateObj.hostname.replace('www.', ''))) {
+                                detectedSrc = key; break;
+                            }
+                        } catch (e) { }
+                    }
+                    if (detectedSrc) {
+                        allTasks.push({ srcKey: detectedSrc, srcConf: CONFIG[detectedSrc], id: extractedId || 'link', url: text, ts: currentOrder++ });
+                        seenIdentifiers.add(text);
+                        if (extractedId) seenIdentifiers.add(extractedId);
+                    }
+                } else {
+                    const ids = text.match(/\d{8,}/g) || [];
+                    // 并行检测所有ID
+                    const detectPromises = ids.filter(id => !seenIdentifiers.has(id)).map(async (id) => {
+                        for (const srcKey of activeSources) {
+                            const conf = CONFIG[srcKey];
+                            const testUrl = conf.url.replace('{id}', id);
+                            if (seenIdentifiers.has(testUrl)) {
+                                seenIdentifiers.add(id);
+                                return null;
+                            }
+                            try {
+                                const res = await fetch(testUrl, { method: 'HEAD', signal: AbortSignal.timeout(3000) });
+                                if (res.ok) {
+                                    return { srcKey, conf, id, url: testUrl };
+                                }
+                            } catch (e) { }
+                        }
+                        return null;
+                    });
+                    const detected = await Promise.allSettled(detectPromises);
+                    for (const result of detected) {
+                        if (result.status === 'fulfilled' && result.value) {
+                            const { srcKey, conf, id, url } = result.value;
+                            if (!seenIdentifiers.has(id)) {
+                                allTasks.push({ srcKey, srcConf: conf, id, url, ts: currentOrder++ });
+                                seenIdentifiers.add(id);
+                                seenIdentifiers.add(url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 2. 处理各来源自己的混合输入 ---
+        for (const srcKey of activeSources) {
+            const srcConf = CONFIG[srcKey];
+            const mixedVal = document.getElementById(`mixed-${srcKey}`)?.value || '';
+            const lines = mixedVal.split('\n').filter(l => l.trim());
+
+            for (const line of lines) {
+                const text = line.trim();
+                if (seenIdentifiers.has(text)) continue;
+
+                if (text.startsWith('http')) {
+                    const idMatch = text.match(/(\d+)/);
+                    const extractedId = idMatch ? idMatch[0] : null;
+                    if (extractedId && seenIdentifiers.has(extractedId)) continue;
+
+                    allTasks.push({ srcKey, srcConf, id: extractedId || 'link', url: text, ts: currentOrder++ });
+                    seenIdentifiers.add(text);
+                    if (extractedId) seenIdentifiers.add(extractedId);
+                } else {
+                    const ids = text.match(/\d{8,}/g) || [];
+                    for (const id of ids) {
+                        if (seenIdentifiers.has(id)) continue;
+                        const testUrl = srcConf.url.replace('{id}', id);
+                        if (seenIdentifiers.has(testUrl)) {
+                            seenIdentifiers.add(id);
+                            continue;
+                        }
+                        allTasks.push({ srcKey, srcConf, id, url: testUrl, ts: currentOrder++ });
+                        seenIdentifiers.add(id);
+                        seenIdentifiers.add(testUrl);
+                    }
+                }
+            }
+        }
+
+        if (allTasks.length === 0) return showToast(globalVal.trim() ? "输入内容已在历史记录或当前批次中重复" : "请先输入数据");
+
+        startBtn.disabled = true;
+        const originalText = startBtn.innerText;
+        startBtn.innerText = "🔍 正在检测平台...";
+        await new Promise(r => setTimeout(r, 100)); // 让UI更新
+
+        const totalIds = allTasks.length;
+        startBtn.innerText = `⚡ 正在采集中... (0/${totalIds})`;
+
+        let successCount = 0;
+        let failCount = 0;
+        let doneCount = 0;
+
+        await Promise.allSettled(allTasks.map(async (task) => {
+            try {
+                const resp = await fetch(task.url);
+                const html = await resp.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const author = doc.querySelector(task.srcConf.selector)?.innerText.trim() || "未知作者";
+
+                currentData[`${task.srcKey}-${task.id}`] = { id: task.id, url: task.url, name: author, source: task.srcKey, status: "成功", ts: task.ts };
+                successCount++;
+            } catch (e) {
+                currentData[`${task.srcKey}-${task.id}`] = { id: task.id, url: task.url, name: "-", source: task.srcKey, status: "采集失败", ts: task.ts };
+                failCount++;
+            }
+            doneCount++;
+            startBtn.innerText = `⚡ 正在采集中... (${doneCount}/${totalIds})`;
+            renderAllRows(currentData);
+        }));
+
+        await chrome.storage.local.set({ savedData: currentData });
+        startBtn.disabled = false;
+        startBtn.innerText = originalText;
+        showToast(`🎉 采集任务完成！\n成功: ${successCount} 条\n失败: ${failCount} 条`);
+    });
+
+    copyResultBtn.onclick = async () => {
+        const res = await chrome.storage.local.get(['savedData']);
+        const data = res.savedData || {};
+
+        // 与表格渲染相同的排序逻辑：来源顺序 + 输入顺序
+        const arr = Object.values(data);
+        arr.sort((a, b) => {
+            const confA = CONFIG[a.source] || {};
+            const confB = CONFIG[b.source] || {};
+            const orderA = typeof confA.seq === 'number' ? confA.seq : 999;
+            const orderB = typeof confB.seq === 'number' ? confB.seq : 999;
+            if (orderA !== orderB) return orderA - orderB;
+            return (a.ts || 0) - (b.ts || 0);
+        });
+
+        const groups = {};
+        getSortedConfig().forEach(c => groups[c.key] = []);
+        arr.forEach(item => {
+            if (!groups[item.source]) groups[item.source] = [];
+            groups[item.source].push(`${item.id}，作者 ${item.name}`);
+        });
+
+        let output = "图案素材:\n";
+        let hasContent = false;
+
+        for (const srcKey in groups) {
+            if (groups[srcKey].length > 0) {
+                const srcName = CONFIG[srcKey] ? CONFIG[srcKey].name : srcKey;
+                output += `${srcName}:\n` + groups[srcKey].join('\n') + "\n";
+                hasContent = true;
+            }
+        }
+
+        if (!hasContent) return showToast("无数据");
+        navigator.clipboard.writeText(output.trim());
+        showToast("格式化结果已复制！");
+    };
+
+    clearBtn.onclick = async () => {
+        if (confirm("清空历史？")) {
+            await chrome.storage.local.remove('savedData');
+            document.getElementById('resultBody').innerHTML = '';
+            document.getElementById('batchDeleteBtn').style.display = 'none';
+            document.getElementById('selectAll').checked = false;
+            showToast("历史记录已清空");
+        }
+    };
+
+    // --- V2: 批量删除逻辑 ---
+    const selectAll = document.getElementById('selectAll');
+    const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+
+    selectAll.onchange = () => {
+        const chks = document.querySelectorAll('.row-chk');
+        chks.forEach(c => c.checked = selectAll.checked);
+        toggleBatchBtn();
+    };
+
+    batchDeleteBtn.onclick = async () => {
+        const chks = Array.from(document.querySelectorAll('.row-chk:checked'));
+        if (chks.length === 0) return;
+
+        if (confirm(`确定要删除选中的 ${chks.length} 条记录吗？`)) {
+            const storage = await chrome.storage.local.get(['savedData']);
+            const data = storage.savedData || {};
+            chks.forEach(chk => {
+                const key = chk.getAttribute('data-key');
+                delete data[key];
+                const row = document.getElementById(`row-${key}`);
+                if (row) row.remove();
+            });
+            await chrome.storage.local.set({ savedData: data });
+            showToast(`已删除 ${chks.length} 条记录`);
+            selectAll.checked = false;
+            toggleBatchBtn();
+        }
+    };
+}
+
+function toggleBatchBtn() {
+    const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+    const hasChecked = document.querySelectorAll('.row-chk:checked').length > 0;
+    batchDeleteBtn.style.display = hasChecked ? 'inline-block' : 'none';
+}
+
+function renderAllRows(dataObj) {
+    const resultBody = document.getElementById('resultBody');
+    resultBody.innerHTML = '';
+
+    const arr = Object.values(dataObj);
+    // 严格按来源配置位置，以及数据输入时间顺序排列
+    arr.sort((a, b) => {
+        const confA = CONFIG[a.source] || {};
+        const confB = CONFIG[b.source] || {};
+        const orderA = typeof confA.seq === 'number' ? confA.seq : 999;
+        const orderB = typeof confB.seq === 'number' ? confB.seq : 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.ts || 0) - (b.ts || 0);
+    });
+
+    arr.forEach(item => {
+        const srcConf = CONFIG[item.source] || { name: item.source, color: '#000' };
+        const row = document.createElement('tr');
+        const itemKey = `${item.source}-${item.id}`;
+        row.id = `row-${itemKey}`;
+
+        row.innerHTML = `
+            <td><input type="checkbox" class="row-chk" data-key="${itemKey}"></td>
+            <td><span class="tag" style="background:${srcConf.color}; font-size:10px; padding:2px 6px; border-radius:4px; color:white; margin-right:5px; font-weight:bold;">${srcConf.name}</span> ${item.id}</td>
+            <td style="color:#409eff; cursor:pointer" class="copy-cell">${item.name}</td>
+            <td style="color:${(item.status || '').includes('失败') ? 'red' : 'green'}">${item.status || '成功'}</td>
+            <td>
+                <span class="delete-cell" title="删除" style="cursor:pointer; font-size:15px; opacity:0.8; transition:0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">✖</span>
+            </td>
+        `;
+
+        row.querySelector('.row-chk').onchange = () => toggleBatchBtn();
+        row.querySelector('.copy-cell').onclick = () => {
+            navigator.clipboard.writeText(item.name);
+            showToast("作者名已复制");
+        };
+        row.querySelector('.delete-cell').onclick = async () => {
+            if (confirm("确定要删除这条记录吗？")) {
+                row.remove();
+                const storage = await chrome.storage.local.get(['savedData']);
+                if (storage.savedData) {
+                    delete storage.savedData[itemKey];
+                    await chrome.storage.local.set({ savedData: storage.savedData });
+                }
+                toggleBatchBtn();
+            }
+        };
+        resultBody.appendChild(row);
+    });
+}
+
+
+// ============== 设置弹窗逻辑 ===============
+function bindSettingsEvents() {
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const settingsArrow = document.getElementById('settingsArrow');
+    const addSourceConfigBtn = document.getElementById('addSourceConfigBtn');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    const exportConfigBtn = document.getElementById('exportConfigBtn');
+    const importConfigBtn = document.getElementById('importConfigBtn');
+    const importFileInput = document.getElementById('importFileInput');
+    const configItemsContainer = document.getElementById('configItemsContainer');
+
+    if (!settingsBtn) return; // in case of page reload mismatch
+
+    settingsBtn.onclick = () => {
+        const isVisible = settingsPanel.style.display !== 'none';
+        if (!isVisible) {
+            renderConfigList();
+            settingsPanel.style.display = 'block';
+            settingsArrow.style.transform = 'rotate(180deg)';
+        } else {
+            settingsPanel.style.display = 'none';
+            settingsArrow.style.transform = 'rotate(0deg)';
+        }
+    };
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    function renderConfigList() {
+        configItemsContainer.innerHTML = '';
+        getSortedConfig().forEach(src => addConfigRow(src));
+    }
+
+    function addConfigRow(src) {
+        const div = document.createElement('div');
+        div.className = 'cfg-row';
+        div.style.position = 'relative';
+        div.style.paddingLeft = '35px';
+        div.style.transition = 'all 0.2s';
+        div.innerHTML = `
+            <div class="drag-handle" title="按住拖拽优先排序" style="position:absolute; left:8px; top:50%; transform:translateY(-50%); cursor:grab; color:#c0c4cc; font-size:24px; user-select:none;">⋮⋮</div>
+            <span class="del-cfg-btn" title="删除来源" style="position:absolute; right:10px; top:10px; color:#f56c6c; font-size:16px; cursor:pointer;" onmouseover="this.style.opacity=0.7" onmouseout="this.style.opacity=1">✖</span>
+            <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center; padding-right:20px;">
+                <label style="font-size:12px; color:#606266; width:45px; flex-shrink:0;">ID标识</label>
+                <input class="cfg-key" value="${escapeHtml(src.key)}" placeholder="如 rf123" style="flex:1; min-width:80px;">
+                
+                <label style="font-size:12px; color:#606266; width:30px; flex-shrink:0;">名称</label>
+                <input class="cfg-name" value="${escapeHtml(src.name)}" placeholder="界面显示" style="flex:1; min-width:80px;">
+                
+                <label style="font-size:12px; color:#606266; width:45px; flex-shrink:0;">标签色</label>
+                <input type="color" class="cfg-color" value="${escapeHtml(src.color)}" style="width:30px; height:28px; padding:0; border:none; background:transparent; cursor:pointer;">
+            </div>
+            <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center;">
+                <label style="font-size:12px; color:#606266; width:45px; flex-shrink:0;">URL模板</label>
+                <input class="cfg-url" value="${escapeHtml(src.url)}" placeholder="如 https://domain.com/photo_{id}.html" style="flex:1; box-sizing:border-box;">
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <label style="font-size:12px; color:#606266; width:45px; flex-shrink:0;">选择器</label>
+                <input class="cfg-sel" value="${escapeHtml(src.selector)}" placeholder="页面元素的 CSS 提取规则" style="flex:1;">
+                <button class="pick-btn" style="background:#67c23a; color:white; border:none; padding:6px 12px; border-radius:4px; font-size:12px; cursor:pointer; flex-shrink:0;">页面点选选择器</button>
+            </div>
+        `;
+        div.querySelector('.del-cfg-btn').onclick = () => div.remove();
+
+        // 拖拽手柄逻辑
+        const handle = div.querySelector('.drag-handle');
+        handle.addEventListener('mousedown', () => div.setAttribute('draggable', 'true'));
+        handle.addEventListener('mouseup', () => div.removeAttribute('draggable'));
+
+        div.addEventListener('dragstart', (e) => {
+            window._draggedRow = div;
+            e.dataTransfer.effectAllowed = 'move';
+            setTimeout(() => {
+                div.style.opacity = '0.5';
+                div.style.background = '#f0f9eb';
+            }, 0);
+        });
+
+        div.addEventListener('dragend', () => {
+            div.style.opacity = '1';
+            div.style.background = '';
+            div.removeAttribute('draggable');
+            window._draggedRow = null;
+        });
+
+        div.addEventListener('dragover', (e) => {
+            e.preventDefault(); // 允许放置
+            const draggingNode = window._draggedRow;
+            if (!draggingNode || draggingNode === div) return;
+
+            const bounding = div.getBoundingClientRect();
+            const offset = bounding.y + (bounding.height / 2);
+            if (e.clientY > offset) {
+                div.parentNode.insertBefore(draggingNode, div.nextSibling);
+            } else {
+                div.parentNode.insertBefore(draggingNode, div);
+            }
+        });
+
+        div.querySelector('.pick-btn').onclick = async () => {
+            const currentKey = div.querySelector('.cfg-key').value.trim();
+            if (!currentKey) return showToast('请先填写标识符再拾取！');
+
+            // 自动将当前弹窗里的临时修改存入草稿
+            const draftConf = {};
+            const rows = configItemsContainer.querySelectorAll('.cfg-row');
+            let draftSeq = 0;
+            for (const r of rows) {
+                const k = r.querySelector('.cfg-key').value.trim();
+                if (k) draftConf[k] = {
+                    seq: draftSeq++,
+                    key: k, name: r.querySelector('.cfg-name').value.trim(),
+                    color: r.querySelector('.cfg-color').value, url: r.querySelector('.cfg-url').value.trim(),
+                    selector: r.querySelector('.cfg-sel').value.trim()
+                };
+            }
+            if (!draftConf[currentKey]) draftConf[currentKey] = { key: currentKey, name: '', color: '#333', url: '', selector: '' };
+
+            // 记录下我们当前在为哪个项目拾取
+            await chrome.storage.local.set({ draftConfig: draftConf, pickingFor: currentKey });
+            startPickingSelector();
+        };
+        configItemsContainer.appendChild(div);
+    }
+
+    addSourceConfigBtn.onclick = async () => {
+        let key = 'new_' + Date.now();
+        let name = '新增来源';
+        let url = '';
+
+        try {
+            const allActiveTabs = await chrome.tabs.query({ active: true });
+            const tab = allActiveTabs.find(t => t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('edge://') && !t.url.startsWith('chrome-extension://'));
+
+            if (tab && tab.url) {
+                const urlObj = new URL(tab.url);
+                url = urlObj.origin + '/{id}'; // 默认模板使用其Origin基础路径
+
+                const hostname = urlObj.hostname;
+                const parts = hostname.split('.');
+
+                // 智能提取域名主干 (比如 www.shutterstock.com 提取出 shutterstock)
+                let domainMain = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+                if (parts.length > 2 && ['com', 'co', 'net', 'org'].includes(parts[parts.length - 2])) {
+                    domainMain = parts[parts.length - 3] || parts[0];
+                }
+
+                if (domainMain && domainMain !== 'www') {
+                    key = domainMain;
+                    name = domainMain.charAt(0).toUpperCase() + domainMain.slice(1);
+                }
+            }
+        } catch (e) {
+            console.error('URL解析失败', e);
+        }
+
+        addConfigRow({ key: key, name: name, color: '#409eff', url: url, selector: '' });
+
+        setTimeout(() => {
+            configItemsContainer.scrollTop = configItemsContainer.scrollHeight;
+        }, 50);
+    };
+
+    saveSettingsBtn.onclick = async () => {
+        const newConf = {};
+        const rows = configItemsContainer.querySelectorAll('.cfg-row');
+        let seqOrder = 0;
+        for (const r of rows) {
+            const key = r.querySelector('.cfg-key').value.trim();
+            if (!key) continue;
+            newConf[key] = {
+                seq: seqOrder++,
+                key: key,
+                name: r.querySelector('.cfg-name').value.trim(),
+                color: r.querySelector('.cfg-color').value,
+                url: r.querySelector('.cfg-url').value.trim(),
+                selector: r.querySelector('.cfg-sel').value.trim()
+            };
+        }
+        CONFIG = newConf;
+        await chrome.storage.local.set({ customConfig: CONFIG });
+        showToast("配置已生效！");
+        settingsPanel.style.display = 'none';
+        settingsArrow.style.transform = 'rotate(0deg)';
+        renderMainUI(); // 刷新主界面
+    };
+
+    exportConfigBtn.onclick = () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(CONFIG, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "qingqing_config.json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    };
+
+    importConfigBtn.onclick = () => {
+        importFileInput.click();
+    };
+
+    importFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+            try {
+                const importedConf = JSON.parse(evt.target.result);
+                if (typeof importedConf === 'object' && Object.keys(importedConf).length > 0) {
+                    CONFIG = importedConf;
+                    renderConfigList();
+                    showToast("导入成功！请记得点击保存。");
+                }
+            } catch (er) {
+                showToast("文件格式有误！");
+            }
+        };
+        reader.readAsText(file);
+    });
+}
+
+async function startPickingSelector() {
+    try {
+        const allActiveTabs = await chrome.tabs.query({ active: true });
+        // 跨窗口寻找真实的网页 (排除扩展页面和浏览器系统页面)
+        const tab = allActiveTabs.find(t => t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('edge://') && !t.url.startsWith('chrome-extension://'));
+
+        if (!tab) {
+            chrome.storage.local.remove(['pickingFor', 'draftConfig']);
+            return showToast('请先在浏览器中打开一个真实的素材网页\\n不要在扩展页面或系统空白页上提取。');
+        }
+
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: function () {
+                if (window._isPickingActive) return;
+                window._isPickingActive = true;
+
+                const overlay = document.createElement('div');
+                overlay.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; z-index:9999999; background:rgba(0,0,0,0); border: 2px solid #409eff; box-sizing:border-box; pointer-events:none;";
+                document.body.appendChild(overlay);
+
+                const tip = document.createElement('div');
+                tip.style.cssText = "position:fixed; top:20px; right:20px; background:#409eff; color:white; padding:15px; border-radius:8px; z-index:10000000; font-family:sans-serif; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.2); pointer-events:none;";
+                tip.innerHTML = "<div style='font-size:16px; font-weight:bold; margin-bottom:5px;'>🎯 元素拾取器已开启</div><div>请在页面上点击你要采集的元素</div><div style='font-size:12px; opacity:0.8; margin-top:5px;'>(按 Esc 取消)</div>";
+                document.body.appendChild(tip);
+
+                const highlightBox = document.createElement('div');
+                highlightBox.style.cssText = "position:absolute; border:2px dashed red; background:rgba(255,0,0,0.1); z-index:9999998; pointer-events:none; transition: all 0.1s;";
+                document.body.appendChild(highlightBox);
+
+                let hoveringElement = null;
+
+                const mouseOverHandler = (e) => {
+                    hoveringElement = e.target;
+                    const rect = hoveringElement.getBoundingClientRect();
+                    highlightBox.style.top = (rect.top + window.scrollY) + 'px';
+                    highlightBox.style.left = (rect.left + window.scrollX) + 'px';
+                    highlightBox.style.width = rect.width + 'px';
+                    highlightBox.style.height = rect.height + 'px';
+                    e.stopPropagation();
+                };
+
+                const getUniqueSelector = (el) => {
+                    if (!el || el.nodeType !== 1) return '';
+                    if (el.id) return `#${CSS.escape(el.id)}`;
+
+                    let path = [];
+                    while (el && el.nodeType === Node.ELEMENT_NODE) {
+                        let selector = el.nodeName.toLowerCase();
+                        if (el.id) {
+                            path.unshift(`#${CSS.escape(el.id)}`);
+                            break;
+                        } else {
+                            let sibling = el, nth = 1;
+                            while (sibling = sibling.previousElementSibling) {
+                                if (sibling.nodeName.toLowerCase() == selector) nth++;
+                            }
+                            if (nth != 1) selector += ":nth-of-type(" + nth + ")";
+                        }
+                        path.unshift(selector);
+                        el = el.parentNode;
+                    }
+                    return path.join(" > ");
+                };
+
+                const cleanup = () => {
+                    window._isPickingActive = false;
+                    document.removeEventListener('mouseover', mouseOverHandler, true);
+                    document.removeEventListener('click', clickHandler, true);
+                    document.removeEventListener('keydown', keydownHandler, true);
+                    overlay.remove();
+                    tip.remove();
+                    highlightBox.remove();
+                };
+
+                const clickHandler = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cleanup();
+                    const selector = getUniqueSelector(e.target);
+                    // 保存并提示
+                    chrome.storage.local.set({ pickedSelector: selector }, () => {
+                        const successTip = document.createElement('div');
+                        successTip.style.cssText = "position:fixed; top:20px; left:50%; transform:translate(-50%, 0); background:#67c23a; color:white; padding:15px; border-radius:8px; z-index:10000000; font-family:sans-serif; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.2); pointer-events:none; line-height:1.6;";
+                        successTip.innerHTML = "✅ <b>选择器已获取并保存内部剪贴板！</b><br/>由于浏览器弹窗特性，拾取期间设置框体已被自动折叠<br/>您现在只需<b>【重新点击右上角的扩展图标】</b><br/>您的修改和新选取的内容将会自动加载！";
+                        document.body.appendChild(successTip);
+                        setTimeout(() => successTip.remove(), 5000);
+                    });
+                };
+
+                const keydownHandler = (e) => {
+                    if (e.key === 'Escape') cleanup();
+                };
+
+                document.addEventListener('mouseover', mouseOverHandler, true);
+                document.addEventListener('click', clickHandler, true);
+                document.addEventListener('keydown', keydownHandler, true);
+            }
+        });
+
+        // 交互重点逻辑：
+        const isFullScreen = window.innerWidth >= 800; // 宽屏说明是单独网页打开的插件
+        if (!isFullScreen) {
+            window.close(); // 自动关闭弹出层让出视线
+        } else {
+            const settingsPanel = document.getElementById('settingsPanel');
+            const settingsArrow = document.getElementById('settingsArrow');
+            if (settingsPanel) settingsPanel.style.display = 'none';
+            if (settingsArrow) settingsArrow.style.transform = 'rotate(0deg)';
+            showToast('拾取器已注入到后台网页！\\n请切换到你需要采集操作的浏览器选项卡！');
+        }
+    } catch (e) {
+        chrome.storage.local.remove(['pickingFor', 'draftConfig']);
+        showToast("无法启动选择器，权限可能受限。\\n请尝试刷新素材页面后重试。(错因: " + e.message + ")");
+    }
+}
+function getImageTargets() {
+    const result = {};
+    const allTarget = document.querySelectorAll('figure-callout');
+    allTarget.forEach(item => {
+        const id = item.attributes.id.value;
+        const imgLabel = item.attributes.label.value;
+        if (result[id]) {
+            result[id].add(imgLabel);
+        } else {
+            result[id] = new Set();
+            result[id].add(imgLabel);
+        }
+    })
+    return Object.entries(result).map(([id, imgSet]) => {
+        return {
+            id: id,
+            imgLabel: Array.from(imgSet)
+        }
+    });
+}

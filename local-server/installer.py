@@ -627,12 +627,7 @@ class InstallerWizard:
             self.progress["value"] = 80
             self.root.update()
 
-            # 注册自定义协议 qqhelpr://（指向 start.bat）
-            self._log("\\n注册自定义协议...")
-            self.install_status.config(text="注册自定义协议...")
-            self._register_protocol(str(install_path))
-
-            # 启动脚本
+            # 创建启动脚本
             self._log("\n创建启动脚本...")
             bat = install_path / "start.bat"
             with open(bat, "w", encoding="utf-8") as f:
@@ -642,6 +637,12 @@ class InstallerWizard:
                 f.write('cd /d "%~dp0"\n')
                 f.write('start "" "bin\\qingqingHelper.exe"\n')
             self._log(f"✓ 启动脚本: {bat}")
+
+            # 注册自定义协议 qqhelpr://（指向 start.bat）
+            # 必须在 start.bat 创建之后执行
+            self._log("\n注册自定义协议...")
+            self.install_status.config(text="注册自定义协议...")
+            self._register_protocol(str(install_path))
 
             self.progress["value"] = 100
             self.install_status.config(text="安装完成!")
