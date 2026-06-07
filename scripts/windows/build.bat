@@ -49,10 +49,8 @@ if not exist "venv\Scripts\python.exe" (
         exit /b 1
     )
     echo venv created
-    set NEED_INSTALL=1
 ) else (
     echo venv exists
-    set NEED_INSTALL=0
 )
 
 set VENV_PIP="%~dp0venv\Scripts\pip.exe"
@@ -60,30 +58,25 @@ set VENV_PYTHON="%~dp0venv\Scripts\python.exe"
 set VENV_PYINSTALLER="%~dp0venv\Scripts\pyinstaller.exe"
 
 echo.
-echo [3/7] Install dependencies...
-if "%NEED_INSTALL%"=="1" (
-    echo Installing packages...
-    %VENV_PIP% install flask flask-cors flask-sock pyautogui pyperclip pygetwindow pywin32 pystray Pillow
-    if errorlevel 1 (
-        echo ERROR: Install packages failed
-        pause
-        exit /b 1
-    )
-    echo Installing pyinstaller...
-    %VENV_PIP% install pyinstaller
-    if errorlevel 1 (
-        echo ERROR: Install pyinstaller failed
-        pause
-        exit /b 1
-    )
-    echo Dependencies installed
-) else (
-    echo Dependencies already installed
+echo [3/7] Install dependencies from requirements.txt...
+%VENV_PIP% install -r "%~dp0..\..\local-server\requirements.txt"
+if errorlevel 1 (
+    echo ERROR: Install requirements failed
+    pause
+    exit /b 1
 )
+echo Installing pyinstaller...
+%VENV_PIP% install pyinstaller
+if errorlevel 1 (
+    echo ERROR: Install pyinstaller failed
+    pause
+    exit /b 1
+)
+echo Dependencies installed
 
 echo.
 echo [4/7] Test imports...
-%VENV_PYTHON% -c "import pystray; import PIL; import flask; import pyautogui; print('OK')"
+%VENV_PYTHON% -c "import pystray; import PIL; import flask; import flask_sock; import pyautogui; import cv2; import numpy; import requests; print('OK')"
 if errorlevel 1 (
     echo ERROR: Import test failed
     pause

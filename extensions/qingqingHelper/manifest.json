@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "Google Image Search Tool",
-  "version": "1.0.0",
-  "description": "批量下载图片并上传到Google搜图",
+  "name": "王青青的小助手",
+  "version": "2.0.0",
+  "description": "素材采集 + 专利标号 + 以图搜图",
   "permissions": [
-    "activeTab",
-    "downloads",
     "storage",
     "tabs",
     "scripting",
+    "activeTab",
+    "downloads",
     "tabGroups",
     "notifications"
   ],
@@ -26,6 +26,19 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://patents.google.com/patent/*"],
+      "js": ["patent-content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["https://patents.google.com/*"]
+    }
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

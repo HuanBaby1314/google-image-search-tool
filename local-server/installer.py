@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import shutil
+import logging
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
@@ -16,6 +17,19 @@ APP_NAME = "青青小助手"
 APP_DIR_NAME = "QingQingHelper"  # 英文文件夹名
 DEFAULT_INSTALL_DIR = str(Path.home() / "AppData" / "Local" / "QingQingHelper")
 WIN_SIZE = "600x500"
+
+# 配置日志 - 输出到文件和控制台
+LOG_FILE = Path(os.environ.get('TEMP', '.')) / 'qingqinghelper_install.log'
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+logger.info(f"安装器启动，日志文件: {LOG_FILE}")
 
 LICENSE_TEXT = """MIT License
 
@@ -310,11 +324,14 @@ class InstallerWizard:
         # 启动服务
         install_path = Path(self.install_dir.get())
         exe_path = install_path / "bin" / "qingqingHelper.exe"
+        logger.info(f"准备启动服务: {exe_path} (exists={exe_path.exists()})")
         if exe_path.exists():
             try:
                 os.startfile(str(exe_path))
+                logger.info(f"服务已启动: {exe_path}")
                 print(f"服务已启动: {exe_path}")
             except Exception as e:
+                logger.error(f"启动服务失败: {e}")
                 print(f"启动服务失败: {e}")
         self.root.destroy()
 
@@ -379,6 +396,7 @@ class InstallerWizard:
     def _register_protocol(self, install_path):
         """注册自定义协议 qqhelpr://，用于浏览器扩展启动服务
         指向 start.bat，用绝对路径写入注册表（不依赖环境变量）
+        使用 HKEY_CURRENT_USER 不需要管理员权限
         """
         try:
             import winreg
@@ -388,14 +406,15 @@ class InstallerWizard:
                 self._log(f"! 启动脚本不存在: {bat_path}，跳过协议注册")
                 return False
 
+            # 使用 HKEY_CURRENT_USER 不需要管理员权限
             # 注册协议根键
-            key = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, "qqhelpr")
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\qqhelpr")
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "URL:QQHelpr Protocol")
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
             winreg.CloseKey(key)
 
             # 注册命令处理（指向 start.bat）
-            cmd_key = winreg.CreateKey(winreg.HKEY_CLASSES_ROOT, r"qqhelpr\shell\open\command")
+            cmd_key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\qqhelpr\shell\open\command")
             winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ,
                               f'"{bat_path}" "%1"')
             winreg.CloseKey(cmd_key)
@@ -410,6 +429,8 @@ class InstallerWizard:
         self.log_text.insert("end", msg + "\n")
         self.log_text.see("end")
         self.root.update()
+        # 同时写入日志文件
+        logger.info(msg)
 
     # ============================================================
     # 安装逻辑
@@ -526,6 +547,9 @@ class InstallerWizard:
                 src_dir = Path(sys.executable).parent
             else:
                 src_dir = Path(__file__).parent
+            
+            logger.info(f"源目录: {src_dir}")
+            logger.info(f"frozen: {getattr(sys, 'frozen', False)}")
 
             # 复制服务程序
             self._log("\n复制程序文件...")
@@ -535,6 +559,8 @@ class InstallerWizard:
             else:
                 exe_src = src_dir / "dist" / "server.exe"
             exe_dst = install_path / "bin" / "qingqingHelper.exe"
+            logger.info(f"服务程序源: {exe_src} (exists={exe_src.exists()})")
+            logger.info(f"服务程序目标: {exe_dst}")
             if exe_src.exists():
                 shutil.copy2(str(exe_src), str(exe_dst))
                 self._log(f"✓ 服务程序: {exe_dst}")
@@ -559,6 +585,8 @@ class InstallerWizard:
             else:
                 ext_src = src_dir.parent / "extensions" / "qingqingHelper"
             ext_dst = install_path / "extensions" / "qingqingHelper"
+            logger.info(f"扩展源: {ext_src} (exists={ext_src.exists()})")
+            logger.info(f"扩展目标: {ext_dst}")
             if ext_src.exists():
                 if ext_dst.exists():
                     shutil.rmtree(str(ext_dst))
@@ -672,7 +700,34 @@ class InstallerWizard:
 
 
 def main():
-    InstallerWizard().run()
+    try:
+        logger.info("=" * 50)
+        logger.info(f"{APP_NAME} 安装向导启动")
+        logger.info(f"Python: {sys.version}")
+        logger.info(f"可执行文件: {sys.executable}")
+        logger.info(f"frozen: {getattr(sys, 'frozen', False)}")
+        if getattr(sys, 'frozen', False):
+            logger.info(f"MEIPASS: {sys._MEIPASS}")
+            # 列出 MEIPASS 目录内容
+            meipass = Path(sys._MEIPASS)
+            for item in meipass.rglob('*'):
+                logger.info(f"  MEIPASS: {item.relative_to(meipass)}")
+        logger.info(f"工作目录: {os.getcwd()}")
+        logger.info(f"日志文件: {LOG_FILE}")
+        logger.info("=" * 50)
+        
+        InstallerWizard().run()
+    except Exception as e:
+        logger.error(f"安装器异常: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        try:
+            from tkinter import messagebox
+            messagebox.showerror("安装器错误", f"安装器启动失败:\n{e}\n\n日志文件: {LOG_FILE}")
+        except:
+            print(f"安装器启动失败: {e}")
+            print(f"日志文件: {LOG_FILE}")
+        input("按 Enter 键退出...")
 
 
 if __name__ == "__main__":

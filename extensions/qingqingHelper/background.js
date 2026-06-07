@@ -150,28 +150,100 @@ async function handlePrepareClick(message) {
   try {
     const result = await chrome.scripting.executeScript({
       target: { tabId: activeTab.id },
-      func: (x, y, expectedTag, expectedText) => {
+      func: (x, y, expectedType, expectedTag, expectedText) => {
         // 获取指定坐标位置的元素
         const el = document.elementFromPoint(x, y);
         if (!el) return { found: false, error: '坐标位置没有元素' };
         
         const actualTag = el.tagName;
-        const actualText = (el.textContent || '').trim().substring(0, 50);
+        const actualText = (el.textContent || '').trim().substring(0, 100);
         const actualRole = el.getAttribute('role');
         const actualJsname = el.getAttribute('jsname');
+        const actualType = el.getAttribute('type');
+        const actualAriaLabel = el.getAttribute('aria-label');
+        const actualClassName = el.className || '';
         
         // 检查元素是否匹配预期
         let matched = true;
         let reasons = [];
+        let isFileUploadButton = false;
         
-        if (expectedTag && actualTag !== expectedTag) {
-          matched = false;
-          reasons.push(`tag不匹配: 期望${expectedTag}, 实际${actualTag}`);
-        }
-        
-        if (expectedText && !actualText.includes(expectedText)) {
-          matched = false;
-          reasons.push(`text不匹配: 期望包含"${expectedText}", 实际"${actualText}"`);
+        // 检测是否是文件上传按钮
+        if (expectedType === 'file_upload_button') {
+          // 文件上传按钮的特征：
+          // 1. input[type="file"]
+          // 2. 包含"上传"、"Upload"、"选择文件"等文本的按钮
+          // 3. 触发文件选择的label或div
+          // 4. aria-label包含上传相关关键词
+          
+          const uploadKeywords = ['上传', 'upload', '选择文件', 'choose file', 'select file', 
+                                  'browse', '浏览', '选取', 'pick'];
+          
+          // 检查是否是 input[type="file"]
+          if (actualTag === 'INPUT' && actualType === 'file') {
+            isFileUploadButton = true;
+            reasons.push('是input[type="file"]元素');
+          }
+          
+          // 检查文本是否包含上传关键词
+          const textLower = actualText.toLowerCase();
+          const hasUploadKeyword = uploadKeywords.some(kw => textLower.includes(kw));
+          if (hasUploadKeyword) {
+            isFileUploadButton = true;
+            reasons.push(`文本包含上传关键词: "${actualText}"`);
+          }
+          
+          // 检查aria-label是否包含上传关键词
+          if (actualAriaLabel) {
+            const ariaLower = actualAriaLabel.toLowerCase();
+            const hasAriaKeyword = uploadKeywords.some(kw => ariaLower.includes(kw));
+            if (hasAriaKeyword) {
+              isFileUploadButton = true;
+              reasons.push(`aria-label包含上传关键词: "${actualAriaLabel}"`);
+            }
+          }
+          
+          // 检查class是否包含上传相关关键词
+          const classLower = actualClassName.toLowerCase();
+          const classKeywords = ['upload', 'file-input', 'file-select', 'attach'];
+          const hasClassKeyword = classKeywords.some(kw => classLower.includes(kw));
+          if (hasClassKeyword) {
+            isFileUploadButton = true;
+            reasons.push(`class包含上传相关关键词`);
+          }
+          
+          // 检查是否有相邻的 input[type="file"]（可能是label或按钮触发文件选择）
+          const nearbyInput = el.querySelector('input[type="file"]') || 
+                             el.parentElement?.querySelector('input[type="file"]');
+          if (nearbyInput) {
+            isFileUploadButton = true;
+            reasons.push('包含或相邻有input[type="file"]');
+          }
+          
+          // 检查是否是可点击的元素（按钮、div、span等）
+          const clickableTags = ['BUTTON', 'DIV', 'SPAN', 'A', 'LABEL'];
+          const isClickable = clickableTags.includes(actualTag) || 
+                             el.onclick || 
+                             actualRole === 'button';
+          
+          if (!isFileUploadButton && isClickable) {
+            // 如果是可点击元素但没有明确的上传特征，标记为不确定
+            reasons.push('是可点击元素，但未检测到明确的文件上传特征');
+          }
+          
+          matched = isFileUploadButton;
+          
+        } else {
+          // 通用元素检查（非文件上传按钮）
+          if (expectedTag && actualTag !== expectedTag) {
+            matched = false;
+            reasons.push(`tag不匹配: 期望${expectedTag}, 实际${actualTag}`);
+          }
+          
+          if (expectedText && !actualText.includes(expectedText)) {
+            matched = false;
+            reasons.push(`text不匹配: 期望包含"${expectedText}", 实际"${actualText}"`);
+          }
         }
         
         // 获取元素的精确位置
@@ -180,12 +252,16 @@ async function handlePrepareClick(message) {
         return {
           found: true,
           matched,
+          isFileUploadButton,
           reasons,
           element: {
             tag: actualTag,
             text: actualText,
             role: actualRole,
             jsname: actualJsname,
+            type: actualType,
+            ariaLabel: actualAriaLabel,
+            className: actualClassName.substring(0, 100),
             rect: {
               x: Math.round(rect.left + rect.width / 2),
               y: Math.round(rect.top + rect.height / 2),
@@ -198,6 +274,7 @@ async function handlePrepareClick(message) {
       args: [
         viewport_x, 
         viewport_y, 
+        element_info?.expected_type || null,
         element_info?.tag || null,
         element_info?.text || null
       ],
@@ -208,13 +285,90 @@ async function handlePrepareClick(message) {
     console.log('[WS] 元素检查结果:', JSON.stringify(checkResult));
     
     if (checkResult && checkResult.found) {
-      sendWsMessage({
+      const response = {
         type: 'confirm-hover',
         request_id,
         confirmed: checkResult.matched,
+        isFileUploadButton: checkResult.isFileUploadButton,
         element: checkResult.element,
         reasons: checkResult.reasons
-      });
+      };
+      
+      // 如果元素不匹配，尝试搜索目标元素并返回修正坐标
+      if (!checkResult.matched && element_info?.expected_type === 'file_upload_button') {
+        try {
+          const searchResult = await chrome.scripting.executeScript({
+            target: { tabId: activeTab.id },
+            func: () => {
+              // 搜索文件上传相关元素
+              const selectors = [
+                'input[type="file"]',
+                'label[for]',
+                '[aria-label*="upload" i]',
+                '[aria-label*="上传" i]',
+                'button[class*="upload" i]',
+                'div[class*="upload" i]',
+                'span[class*="upload" i]'
+              ];
+              
+              for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                  const rect = el.getBoundingClientRect();
+                  if (rect.width > 0 && rect.height > 0) {
+                    return {
+                      found: true,
+                      x: Math.round(rect.left + rect.width / 2),
+                      y: Math.round(rect.top + rect.height / 2),
+                      tag: el.tagName,
+                      selector: sel
+                    };
+                  }
+                }
+              }
+              
+              // 如果没找到，搜索包含上传关键词的可点击元素
+              const allElements = document.querySelectorAll('button, div[role="button"], span[role="button"], label, a');
+              const uploadKeywords = ['上传', 'upload', '选择文件', 'choose file', 'select file', 'browse', '浏览'];
+              
+              for (const el of allElements) {
+                const text = (el.textContent || '').toLowerCase();
+                const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                
+                if (uploadKeywords.some(kw => text.includes(kw) || ariaLabel.includes(kw))) {
+                  const rect = el.getBoundingClientRect();
+                  if (rect.width > 0 && rect.height > 0) {
+                    return {
+                      found: true,
+                      x: Math.round(rect.left + rect.width / 2),
+                      y: Math.round(rect.top + rect.height / 2),
+                      tag: el.tagName,
+                      text: el.textContent?.trim().substring(0, 50)
+                    };
+                  }
+                }
+              }
+              
+              return { found: false };
+            },
+            args: [],
+            world: 'MAIN'
+          });
+          
+          const targetResult = searchResult?.[0]?.result;
+          if (targetResult?.found) {
+            response.corrected_x = targetResult.x;
+            response.corrected_y = targetResult.y;
+            response.reasons = [...(response.reasons || []), 
+              `找到目标元素: ${targetResult.tag} at (${targetResult.x}, ${targetResult.y})`];
+            console.log('[WS] 找到目标元素，修正坐标:', targetResult.x, targetResult.y);
+          }
+        } catch (e) {
+          console.warn('[WS] 搜索目标元素失败:', e);
+        }
+      }
+      
+      sendWsMessage(response);
     } else {
       sendWsMessage({
         type: 'confirm-hover',
@@ -799,7 +953,7 @@ async function prepareSearchTab(imageInfo) {
     // 打开Google搜图页面
     const tab = await chrome.tabs.create({
       url: 'https://www.google.com/imghp',
-      active: false
+      active: true  // 激活新tab
     });
     
     await waitForTabComplete(tab.id);
@@ -857,6 +1011,10 @@ async function duplicateSearchTab(sourceTabId, imageInfo) {
   try {
     // 复制tab
     const newTab = await chrome.tabs.duplicate(sourceTabId);
+    
+    // 设置复制的tab为不激活
+    await chrome.tabs.update(newTab.id, { active: false });
+    
     await waitForTabComplete(newTab.id);
     await wait(1000);
     
@@ -916,7 +1074,7 @@ async function prepareAmazonSearchTab(imageInfo) {
     // 打开Amazon StyleSnap页面
     const tab = await chrome.tabs.create({
       url: 'https://www.amazon.com/stylesnap',
-      active: false
+      active: true  // 激活新tab
     });
     
     await waitForTabComplete(tab.id);
@@ -952,6 +1110,10 @@ async function duplicateAmazonSearchTab(sourceTabId, imageInfo) {
   try {
     // 复制tab
     const newTab = await chrome.tabs.duplicate(sourceTabId);
+    
+    // 设置复制的tab为不激活
+    await chrome.tabs.update(newTab.id, { active: false });
+    
     await waitForTabComplete(newTab.id);
     await wait(1500);
     

@@ -49,4 +49,4 @@ config.local.yaml
 # Temporary Files
 *.tmp
 *.bak
-*.bak.*
+*.bak.*local-server/images/

@@ -2,35 +2,43 @@
 # PyInstaller config - Installer (qingqingHelper.exe)
 
 import sys
+import os
 from pathlib import Path
 
 block_cipher = None
 
+# 获取 spec 文件所在目录
+SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+
 # 获取需要打包的资源
-chrome_ext_dir = Path('../extensions/qingqingHelper').absolute()
-server_exe = Path('dist/server.exe').absolute()
-uninstall_exe = Path('dist/uninstall.exe').absolute()
+chrome_ext_dir = os.path.join(SPEC_DIR, '..', '..', 'extensions', 'qingqingHelper')
+server_exe = os.path.join(SPEC_DIR, 'dist', 'server.exe')
+uninstall_exe = os.path.join(SPEC_DIR, 'dist', 'uninstall.exe')
+
+# venv site-packages 路径
+venv_site_packages = os.path.join(SPEC_DIR, 'venv', 'Lib', 'site-packages')
 
 datas = [
-    (str(chrome_ext_dir), 'extensions/qingqingHelper'),
+    (chrome_ext_dir, 'extensions/qingqingHelper'),
 ]
 # 如果 server.exe 存在，打包进去
-if server_exe.exists():
-    datas.append((str(server_exe), '.'))
+if os.path.exists(server_exe):
+    datas.append((server_exe, '.'))
 # 如果 uninstall.exe 存在，打包进去
-if uninstall_exe.exists():
-    datas.append((str(uninstall_exe), '.'))
+if os.path.exists(uninstall_exe):
+    datas.append((uninstall_exe, '.'))
 
 a = Analysis(
-    ['installer.py'],
-    pathex=[],
+    [os.path.join(SPEC_DIR, '..', '..', 'local-server', 'installer.py')],
+    pathex=[venv_site_packages],
     binaries=[],
     datas=datas,
     hiddenimports=[
         'tkinter',
+        'tkinter.ttk',
         'tkinter.filedialog',
         'tkinter.messagebox',
-        'tkinter.ttk',
+        'shutil',
     ],
     hookspath=[],
     hooksconfig={},

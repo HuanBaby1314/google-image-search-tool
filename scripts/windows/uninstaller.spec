@@ -2,13 +2,20 @@
 # PyInstaller config - Uninstaller
 
 import sys
+import os
 from pathlib import Path
 
 block_cipher = None
 
+# 获取 spec 文件所在目录
+SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+
+# venv site-packages 路径
+venv_site_packages = os.path.join(SPEC_DIR, 'venv', 'Lib', 'site-packages')
+
 a = Analysis(
-    ['uninstaller.py'],
-    pathex=[],
+    [os.path.join(SPEC_DIR, '..', '..', 'local-server', 'uninstaller.py')],
+    pathex=[venv_site_packages],
     binaries=[],
     datas=[],
     hiddenimports=[
