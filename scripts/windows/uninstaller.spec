@@ -10,8 +10,11 @@ block_cipher = None
 # 获取 spec 文件所在目录
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 
+# 获取项目根目录
+PROJECT_ROOT = os.path.abspath(os.path.join(SPEC_DIR, '..', '..'))
+
 # venv site-packages 路径
-venv_site_packages = os.path.join(SPEC_DIR, 'venv', 'Lib', 'site-packages')
+venv_site_packages = os.path.join(PROJECT_ROOT, 'local-server', 'venv', 'Lib', 'site-packages')
 
 a = Analysis(
     [os.path.join(SPEC_DIR, '..', '..', 'local-server', 'uninstaller.py')],

@@ -307,6 +307,66 @@
     return downloadedFiles.some(f => f.url === imageSrc);
   }
 
+  // 统一下载函数：先检查服务器是否存在，不存在则下载，失败时回退到扩展端下载
+  async function downloadImageToServer(img) {
+    const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
+
+    try {
+      // 1. 先检查服务器是否已有该文件
+      const checkResp = await fetch(`${serverUrl}/api/check-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: img.filename }),
+        signal: AbortSignal.timeout(5000)
+      });
+      const checkResult = await checkResp.json();
+      if (checkResult.exists) {
+        console.log('[下载] 文件已存在:', img.filename);
+        return { success: true, filename: checkResult.filename || img.filename, existed: true };
+      }
+
+      // 2. 尝试通过服务器下载
+      console.log('[下载] 服务器下载:', img.filename);
+      const resp = await fetch(`${serverUrl}/api/download-remote-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: img.src, filename: img.filename }),
+        signal: AbortSignal.timeout(30000)
+      });
+      const result = await resp.json();
+      if (result.success) {
+        console.log('[下载] 服务器下载成功:', img.filename);
+        return { success: true, filename: result.filename || img.filename, localUrl: result.url };
+      }
+
+      // 3. 服务器下载失败，回退到扩展端下载
+      console.log('[下载] 服务器下载失败，回退到扩展端:', result.error);
+      return await downloadImageViaExtension(img);
+    } catch (error) {
+      // 4. 网络异常，回退到扩展端下载
+      console.log('[下载] 服务器异常，回退到扩展端:', error.message);
+      return await downloadImageViaExtension(img);
+    }
+  }
+
+  // 扩展端下载回退方案
+  async function downloadImageViaExtension(img) {
+    try {
+      const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
+      const downloadId = await chrome.downloads.download({
+        url: img.src,
+        filename: downloadPath,
+        saveAs: false
+      });
+      await waitForDownload(downloadId);
+      console.log('[下载] 扩展端下载成功:', img.filename);
+      return { success: true, filename: img.filename };
+    } catch (error) {
+      console.error('[下载] 扩展端下载也失败:', img.filename, error);
+      return { success: false, filename: img.filename, error: error.message };
+    }
+  }
+
   // 清除图片列表
   function clearImages() {
     images = [];
@@ -995,17 +1055,14 @@
 
     for (const img of remoteImages) {
       try {
-        const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
-
-        const downloadId = await chrome.downloads.download({
-          url: img.src,
-          filename: downloadPath,
-          saveAs: false
-        });
-
-        await waitForDownload(downloadId);
-        newFiles.push({ filename: img.filename, url: img.src });
-        completed++;
+        const result = await downloadImageToServer(img);
+        if (result.success) {
+          newFiles.push({ filename: result.filename, url: img.src, localUrl: result.localUrl });
+          completed++;
+        } else {
+          console.error('下载失败:', img.src, result.error);
+          failed++;
+        }
         updateProgress(completed, remoteImages.length);
       } catch (error) {
         console.error('下载失败:', img.src, error);
@@ -1085,27 +1142,44 @@
 
     const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
 
+    console.log('[搜图] 选中:', selected.length, '需下载:', toDownload.length, '已下载:', downloadedFiles.length);
+
     if (toDownload.length > 0) {
-      showToast(`正在下载 ${toDownload.length} 张图片...`, 'info');
+      showToast(`正在下载 ${toDownload.length} 张图片到安装目录...`, 'info');
+
+      const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
+      let downloadSuccess = 0;
+      let downloadFail = 0;
 
       for (const img of toDownload) {
         try {
-          const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
-          const downloadId = await chrome.downloads.download({
-            url: img.src,
-            filename: downloadPath,
-            saveAs: false
-          });
-          await waitForDownload(downloadId);
-          downloadedFiles.push({ filename: img.filename, url: img.src });
+          console.log('[搜图] 下载:', img.filename, img.src);
+          const result = await downloadImageToServer(img);
+          console.log('[搜图] 下载结果:', img.filename, result);
+          if (result.success) {
+            downloadedFiles.push({ filename: result.filename, url: img.src, localUrl: result.localUrl });
+            downloadSuccess++;
+          } else {
+            console.error('下载失败:', img.src, result.error);
+            downloadFail++;
+          }
         } catch (error) {
-          console.error('下载失败:', img.src, error);
+          console.error('下载异常:', img.src, error);
+          downloadFail++;
         }
+      }
+
+      if (downloadFail > 0) {
+        showToast(`下载完成: ${downloadSuccess} 成功, ${downloadFail} 失败`, 'error');
+      } else {
+        showToast(`成功下载 ${downloadSuccess} 张图片`, 'success');
       }
 
       await saveState();
       updateDownloadCount();
       renderImageList();
+    } else {
+      console.log('[搜图] 无需下载，直接开始搜图');
     }
 
     showToast('开始搜图流程...', 'info');
@@ -1145,27 +1219,44 @@
 
     const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
 
+    console.log('[Amazon搜图] 选中:', selected.length, '需下载:', toDownload.length, '已下载:', downloadedFiles.length);
+
     if (toDownload.length > 0) {
-      showToast(`正在下载 ${toDownload.length} 张图片...`, 'info');
+      showToast(`正在下载 ${toDownload.length} 张图片到安装目录...`, 'info');
+
+      const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
+      let downloadSuccess = 0;
+      let downloadFail = 0;
 
       for (const img of toDownload) {
         try {
-          const downloadPath = `qingqing_helper_dir/${getTodayDir()}/${img.filename}`;
-          const downloadId = await chrome.downloads.download({
-            url: img.src,
-            filename: downloadPath,
-            saveAs: false
-          });
-          await waitForDownload(downloadId);
-          downloadedFiles.push({ filename: img.filename, url: img.src });
+          console.log('[Amazon搜图] 下载:', img.filename, img.src);
+          const result = await downloadImageToServer(img);
+          console.log('[Amazon搜图] 下载结果:', img.filename, result);
+          if (result.success) {
+            downloadedFiles.push({ filename: result.filename, url: img.src, localUrl: result.localUrl });
+            downloadSuccess++;
+          } else {
+            console.error('下载失败:', img.src, result.error);
+            downloadFail++;
+          }
         } catch (error) {
-          console.error('下载失败:', img.src, error);
+          console.error('下载异常:', img.src, error);
+          downloadFail++;
         }
+      }
+
+      if (downloadFail > 0) {
+        showToast(`下载完成: ${downloadSuccess} 成功, ${downloadFail} 失败`, 'error');
+      } else {
+        showToast(`成功下载 ${downloadSuccess} 张图片`, 'success');
       }
 
       await saveState();
       updateDownloadCount();
       renderImageList();
+    } else {
+      console.log('[Amazon搜图] 无需下载，直接开始搜图');
     }
 
     showToast('开始Amazon搜图流程...', 'info');

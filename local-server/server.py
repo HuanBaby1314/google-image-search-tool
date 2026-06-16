@@ -257,9 +257,12 @@ def ws_send_and_wait(message, wait_for_type=None, timeout=10.0):
     request_id = message.get('request_id', '')
     
     while time.time() < deadline:
+        # 检查是否有待处理的响应（值不是 None 表示已收到响应）
         if request_id and request_id in ws_pending_click:
-            result = ws_pending_click.pop(request_id)
-            return result
+            result = ws_pending_click[request_id]
+            if result is not None:
+                ws_pending_click.pop(request_id)
+                return result
         time.sleep(0.1)
     
     logger.warning(f"[WS] 等待响应超时: {wait_for_type}")
@@ -396,6 +399,88 @@ def save_local_image():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@app.route('/api/download-remote-image', methods=['POST'])
+def download_remote_image():
+    """下载远程图片到服务器的images目录"""
+    import requests as req
+    import uuid
+    
+    data = request.json
+    image_url = data.get('url', '')
+    filename = data.get('filename', '')
+    
+    if not image_url:
+        return jsonify({'success': False, 'error': '图片URL为空'})
+    
+    try:
+        images_dir = get_images_dir()
+        
+        # 如果没有指定文件名，从URL生成
+        if not filename:
+            url_path = image_url.split('?')[0]
+            if '/' in url_path:
+                filename = url_path.split('/')[-1]
+            if not filename or '.' not in filename:
+                filename = f"img_{uuid.uuid4().hex[:8]}.jpg"
+        
+        # 确保文件名安全
+        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        
+        # 先检查文件是否已存在
+        existing = find_file(filename)
+        if existing:
+            logger.info(f"文件已存在，跳过下载: {existing}")
+            return jsonify({
+                'success': True,
+                'path': existing,
+                'url': f'/images/{Path(existing).name}',
+                'filename': Path(existing).name,
+                'existed': True
+            })
+        
+        file_path = images_dir / filename
+        
+        # 下载图片
+        logger.info(f"下载远程图片: {image_url}")
+        response = req.get(image_url, timeout=30, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        response.raise_for_status()
+        
+        # 保存文件
+        with open(file_path, 'wb') as f:
+            f.write(response.content)
+        
+        logger.info(f"图片已保存: {file_path}")
+        
+        return jsonify({
+            'success': True,
+            'path': str(file_path),
+            'url': f'/images/{file_path.name}',
+            'filename': file_path.name
+        })
+        
+    except Exception as e:
+        logger.error(f"下载图片失败: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/check-file', methods=['POST'])
+def check_file_exists():
+    """检查文件是否存在于服务器"""
+    data = request.json
+    filename = data.get('filename', '')
+    
+    if not filename:
+        return jsonify({'exists': False, 'error': '文件名为空'})
+    
+    found = find_file(filename)
+    if found:
+        return jsonify({'exists': True, 'path': found, 'filename': Path(found).name})
+    else:
+        return jsonify({'exists': False})
+
+
 @app.route('/api/get-download-dir', methods=['GET'])
 def get_download_dir():
     return jsonify({'download_dir': str(get_work_dir())})
@@ -426,6 +511,13 @@ def select_file_and_upload():
     full_path = find_file(filename)
     
     if not full_path:
+        # 列出搜索目录内容，帮助调试
+        search_dirs = [get_work_dir(), get_images_dir()]
+        for d in search_dirs:
+            if d.exists():
+                files = [f.name for f in d.iterdir() if f.is_file()][:10]
+                logger.warning(f"目录 {d} 中的文件: {files}")
+        logger.error(f"文件不存在: {filename}")
         return jsonify({'success': False, 'error': f'文件不存在: {filename}'})
 
     logger.info(f"找到文件: {full_path}")
@@ -514,61 +606,69 @@ def debug_test_click():
     data = request.json
     viewport_x = data.get('x', 0)
     viewport_y = data.get('y', 0)
+    nav_bar_height = data.get('navBarHeight', 85)
     
-    logger.info(f"测试点击: viewport({viewport_x}, {viewport_y})")
+    logger.info(f"测试点击: viewport({viewport_x}, {viewport_y}), navBarHeight={nav_bar_height}")
     
-    success = click_at_position(viewport_x, viewport_y)
+    success, screen_x, screen_y = click_at_position(viewport_x, viewport_y, nav_bar_height)
     
     return jsonify({
         'success': success,
+        'screenX': screen_x,
+        'screenY': screen_y,
         'viewport': {'x': viewport_x, 'y': viewport_y}
     })
 
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'success': False, 'error': '接口不存在'}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({'success': False, 'error': '服务器内部错误'}), 500
-
-@app.errorhandler(Exception)
-def handle_exception(e):
-    logger.error(f"未捕获的异常: {e}")
-    import traceback
-    traceback.print_exc()
-    return jsonify({'success': False, 'error': str(e)}), 500
-
-# WebSocket 客户端管理
-ws_clients = set()
-ws_pending_click = {}  # 待确认的点击请求
-
-
-def get_base_dir():
-    return Path.home() / "Downloads"
-
-
-def get_today_dir():
-    return datetime.now().strftime('%Y%m%d')
-
-
-def get_work_dir():
-    base = get_base_dir()
-    today = get_today_dir()
-    work_dir = base / "qingqing_helper_dir" / today
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
-
-
-def get_images_dir():
-    """获取图片存储目录（用于静态服务）"""
-    images_dir = Path(__file__).parent / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    return images_dir
-
-
-# 上传工具函数已移至 upload_utils.py
+@app.route('/api/debug/move-mouse', methods=['POST'])
+def debug_move_mouse():
+    """调试：移动鼠标到指定位置"""
+    import pyautogui
+    
+    data = request.json
+    screen_x = data.get('screenX')
+    screen_y = data.get('screenY')
+    viewport_x = data.get('x', 0)
+    viewport_y = data.get('y', 0)
+    nav_bar_height = data.get('navBarHeight')
+    
+    # 如果提供了屏幕坐标，直接使用
+    if screen_x is not None and screen_y is not None:
+        logger.info(f"移动鼠标到屏幕坐标: ({screen_x}, {screen_y})")
+        try:
+            pyautogui.moveTo(screen_x, screen_y, duration=0.3)
+            time.sleep(0.1)
+            
+            # 验证位置
+            actual_pos = pyautogui.position()
+            if abs(actual_pos.x - screen_x) > 5 or abs(actual_pos.y - screen_y) > 5:
+                logger.warning("pyautogui未生效，使用ctypes")
+                import ctypes
+                ctypes.windll.user32.SetCursorPos(int(screen_x), int(screen_y))
+            
+            return jsonify({
+                'success': True,
+                'screenX': screen_x,
+                'screenY': screen_y
+            })
+        except Exception as e:
+            logger.error(f"移动鼠标失败: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    
+    # 否则使用视口坐标转换
+    logger.info(f"移动鼠标: viewport({viewport_x}, {viewport_y}), navBarHeight={nav_bar_height}")
+    
+    if nav_bar_height is None:
+        nav_bar_height = 85
+    
+    moved, screen_x, screen_y = move_to_position(viewport_x, viewport_y, nav_bar_height)
+    
+    return jsonify({
+        'success': moved,
+        'screenX': screen_x,
+        'screenY': screen_y,
+        'viewport': {'x': viewport_x, 'y': viewport_y}
+    })
 
 
 # ==================== 图片分割 ====================
@@ -651,385 +751,6 @@ def serve_split_image(filename):
     """提供分割后的图片访问"""
     split_dir = get_split_dir()
     return send_from_directory(str(split_dir), filename)
-
-
-
-# ==================== WebSocket ====================
-
-import json as json_module
-
-@sock.route('/ws')
-def websocket_handler(ws):
-    """WebSocket 连接处理"""
-    ws_clients.add(ws)
-    logger.info(f"[WS] 客户端连接，当前连接数: {len(ws_clients)}")
-    
-    last_pong = time.time()
-    HEARTBEAT_INTERVAL = 30
-    
-    try:
-        while True:
-            try:
-                data = ws.receive(timeout=HEARTBEAT_INTERVAL)
-                if data is None:
-                    current_time = time.time()
-                    if current_time - last_pong > HEARTBEAT_INTERVAL * 2:
-                        logger.warning("[WS] 心跳超时，断开连接")
-                        break
-                    try:
-                        ws.send(json_module.dumps({'type': 'ping', 'timestamp': int(current_time)}))
-                    except:
-                        break
-                    continue
-                
-                message = json_module.loads(data)
-                msg_type = message.get('type', '')
-                
-                if msg_type == 'pong':
-                    last_pong = time.time()
-                    continue
-                
-                if msg_type == 'ping':
-                    ws.send(json_module.dumps({'type': 'pong', 'timestamp': int(time.time())}))
-                    continue
-                
-                if msg_type == 'confirm-hover':
-                    request_id = message.get('request_id', '')
-                    confirmed = message.get('confirmed', False)
-                    is_file_upload_button = message.get('isFileUploadButton', False)
-                    corrected_x = message.get('corrected_x')
-                    corrected_y = message.get('corrected_y')
-                    element = message.get('element', {})
-                    reasons = message.get('reasons', [])
-                    
-                    if request_id in ws_pending_click:
-                        ws_pending_click[request_id] = {
-                            'confirmed': confirmed,
-                            'isFileUploadButton': is_file_upload_button,
-                            'corrected_x': corrected_x,
-                            'corrected_y': corrected_y,
-                            'element': element,
-                            'reasons': reasons,
-                            'timestamp': time.time()
-                        }
-                        logger.info(f"[WS] 收到点击确认: request_id={request_id}, confirmed={confirmed}, isFileUploadButton={is_file_upload_button}")
-                        if reasons:
-                            logger.info(f"[WS] 确认原因: {reasons}")
-                    
-                    continue
-                
-                logger.info(f"[WS] 收到消息: {msg_type}")
-                
-            except Exception as e:
-                if 'timeout' in str(e).lower() or 'timed out' in str(e).lower():
-                    current_time = time.time()
-                    if current_time - last_pong > HEARTBEAT_INTERVAL * 2:
-                        logger.warning("[WS] 心跳超时，断开连接")
-                        break
-                    try:
-                        ws.send(json_module.dumps({'type': 'ping', 'timestamp': int(current_time)}))
-                    except:
-                        break
-                    continue
-                raise
-                
-    except Exception as e:
-        logger.error(f"[WS] 连接异常: {e}")
-    finally:
-        ws_clients.discard(ws)
-        logger.info(f"[WS] 客户端断开，当前连接数: {len(ws_clients)}")
-
-def ws_send_and_wait(message, wait_for_type=None, timeout=10.0):
-    """向所有 WebSocket 客户端发送消息，可选等待特定类型的响应"""
-    if not ws_clients:
-        logger.warning("[WS] 没有连接的客户端")
-        return None
-    
-    data = json_module.dumps(message)
-    dead_clients = set()
-    
-    for ws in ws_clients:
-        try:
-            ws.send(data)
-        except Exception as e:
-            logger.error(f"[WS] 发送失败: {e}")
-            dead_clients.add(ws)
-    
-    ws_clients.difference_update(dead_clients)
-    
-    if not wait_for_type or not ws_clients:
-        return None
-    
-    deadline = time.time() + timeout
-    request_id = message.get('request_id', '')
-    
-    while time.time() < deadline:
-        if request_id and request_id in ws_pending_click:
-            result = ws_pending_click.pop(request_id)
-            return result
-        time.sleep(0.1)
-    
-    logger.warning(f"[WS] 等待响应超时: {wait_for_type}")
-    return None
-
-def ws_prepare_click(viewport_x, viewport_y, nav_bar_height, element_info=None):
-    """通知扩展准备点击，等待 hover 确认"""
-    import uuid
-    request_id = str(uuid.uuid4())[:8]
-    
-    message = {
-        'type': 'prepare-click',
-        'request_id': request_id,
-        'viewport_x': viewport_x,
-        'viewport_y': viewport_y,
-        'nav_bar_height': nav_bar_height,
-        'element_info': element_info or {}
-    }
-    
-    ws_pending_click[request_id] = None
-    result = ws_send_and_wait(message, wait_for_type='confirm-hover', timeout=10.0)
-    ws_pending_click.pop(request_id, None)
-    
-    return result
-
-# ==================== Flask路由 ====================
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'ok', 'message': '服务正常'})
-
-
-@app.route('/images/<path:filename>')
-def serve_image(filename):
-    """提供图片静态访问"""
-    images_dir = get_images_dir()
-    return send_from_directory(str(images_dir), filename)
-
-
-@app.route('/api/open-file-location', methods=['POST'])
-def open_file_location():
-    """打开文件所在目录"""
-    import subprocess
-    
-    data = request.json
-    image_url = data.get('imageUrl', '')
-    
-    if not image_url:
-        return jsonify({'success': False, 'error': '图片URL为空'})
-    
-    try:
-        # 从URL提取文件路径
-        if image_url.startswith('/images/'):
-            # 本地图片路径
-            file_path = Path(__file__).parent / image_url.lstrip('/')
-        elif image_url.startswith('http://localhost') or image_url.startswith('https://localhost'):
-            # 从本地服务器URL提取路径
-            from urllib.parse import urlparse
-            parsed = urlparse(image_url)
-            file_path = Path(__file__).parent / parsed.path.lstrip('/')
-        else:
-            return jsonify({'success': False, 'error': '不支持的URL格式'})
-        
-        if not file_path.exists():
-            return jsonify({'success': False, 'error': f'文件不存在: {file_path}'})
-        
-        # 获取文件所在目录
-        dir_path = file_path.parent
-        
-        logger.info(f"[打开目录] 文件: {file_path}")
-        logger.info(f"[打开目录] 目录: {dir_path}")
-        
-        # 根据操作系统打开目录
-        if system == 'Darwin':
-            # macOS: 使用 Finder 打开并选中文件
-            subprocess.Popen(['open', '-R', str(file_path)])
-        elif system == 'Windows':
-            # Windows: 使用资源管理器打开并选中文件
-            subprocess.Popen(['explorer', '/select,', str(file_path)])
-        else:
-            # Linux: 使用 xdg-open 打开目录
-            subprocess.Popen(['xdg-open', str(dir_path)])
-        
-        return jsonify({
-            'success': True,
-            'path': str(file_path),
-            'directory': str(dir_path)
-        })
-        
-    except Exception as e:
-        logger.error(f"[打开目录] 失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)})
-
-
-@app.route('/api/save-local-image', methods=['POST'])
-def save_local_image():
-    """保存本地图片到服务器"""
-    data = request.json
-    filename = data.get('filename', '')
-    file_data = data.get('fileData', '')
-    
-    if not filename or not file_data:
-        return jsonify({'success': False, 'error': '参数不完整'})
-    
-    try:
-        import base64
-        
-        images_dir = get_images_dir()
-        
-        # 解析base64数据
-        if file_data.startswith('data:'):
-            # 移除data:image/xxx;base64,前缀
-            file_data = file_data.split(',')[1]
-        
-        file_bytes = base64.b64decode(file_data)
-        
-        # 保存文件
-        file_path = images_dir / filename
-        with open(file_path, 'wb') as f:
-            f.write(file_bytes)
-        
-        logger.info(f"保存本地图片: {file_path}")
-        
-        return jsonify({
-            'success': True,
-            'path': str(file_path),
-            'url': f'/images/{filename}'
-        })
-        
-    except Exception as e:
-        logger.error(f"保存图片失败: {e}")
-        return jsonify({'success': False, 'error': str(e)})
-
-
-@app.route('/api/get-download-dir', methods=['GET'])
-def get_download_dir():
-    return jsonify({'download_dir': str(get_work_dir())})
-
-
-@app.route('/api/select-file-and-upload', methods=['POST'])
-def select_file_and_upload():
-    """点击坐标并选择文件上传"""
-    data = request.json
-    filename = data.get('filename', '')
-    is_local = data.get('isLocal', False)
-    button_x = data.get('buttonX')
-    button_y = data.get('buttonY')
-    nav_bar_height = data.get('navBarHeight', 85)
-    button_width = data.get('buttonWidth', 0)
-    button_height = data.get('buttonHeight', 0)
-    preview_only = data.get('preview', False)  # 预览模式
-    
-    if not filename:
-        return jsonify({'success': False, 'error': '文件名为空'})
-
-    logger.info(f"查找文件: {filename} (isLocal={is_local})")
-    logger.info(f"视口坐标: ({button_x}, {button_y}), 导航栏高度: {nav_bar_height}")
-    
-    if preview_only:
-        logger.info("预览模式：只移动鼠标到目标位置")
-
-    full_path = find_file(filename)
-    
-    if not full_path:
-        return jsonify({'success': False, 'error': f'文件不存在: {filename}'})
-
-    logger.info(f"找到文件: {full_path}")
-
-    try:
-        # 使用带重试的上传流程
-        success = upload_file_with_retry(
-            full_path, button_x, button_y, nav_bar_height,
-            button_width, button_height, max_retries=3, 
-            preview_only=preview_only,
-            hover_check_fn=ws_prepare_click
-        )
-        
-        if success:
-            if preview_only:
-                return jsonify({'success': True, 'message': '预览完成，鼠标已移动到目标位置'})
-            else:
-                return jsonify({'success': True, 'message': '文件选择成功'})
-        else:
-            return jsonify({'success': False, 'error': '文件选择失败'})
-    except Exception as e:
-        logger.error(f"上传失败: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)})
-
-
-@app.route('/api/upload-and-search', methods=['POST'])
-def upload_and_search():
-    data = request.json
-    files = data.get('files', [])
-
-    if not files:
-        return jsonify({'success': False, 'error': '没有文件'})
-
-    for file_info in files:
-        filename = file_info.get('filename', '')
-        if filename:
-            thread = Thread(target=process_upload, args=(filename,))
-            thread.daemon = True
-            thread.start()
-
-    return jsonify({'success': True, 'count': len(files)})
-
-
-def process_upload(filename):
-    """处理单个文件上传"""
-    try:
-        full_path = find_file(filename)
-        if not full_path:
-            logger.error(f"文件不存在: {filename}")
-            return
-
-        success = select_file_in_dialog(full_path)
-        if success:
-            logger.info(f"上传成功: {filename}")
-        else:
-            logger.error(f"上传失败: {filename}")
-    except Exception as e:
-        logger.error(f"上传异常: {str(e)}")
-
-
-@app.route('/api/debug/browser-info', methods=['GET'])
-def debug_browser_info():
-    """调试：获取浏览器窗口信息"""
-    window = get_browser_window()
-    
-    if not window:
-        return jsonify({'success': False, 'error': '未找到浏览器窗口'})
-    
-    return jsonify({
-        'success': True,
-        'browser': {
-            'title': window.title,
-            'left': window.left,
-            'top': window.top,
-            'width': window.width,
-            'height': window.height,
-            'isMinimized': window.isMinimized,
-            'isActive': window.isActive
-        }
-    })
-
-
-@app.route('/api/debug/test-click', methods=['POST'])
-def debug_test_click():
-    """调试：测试点击坐标"""
-    data = request.json
-    viewport_x = data.get('x', 0)
-    viewport_y = data.get('y', 0)
-    
-    logger.info(f"测试点击: viewport({viewport_x}, {viewport_y})")
-    
-    success = click_at_position(viewport_x, viewport_y)
-    
-    return jsonify({
-        'success': success,
-        'viewport': {'x': viewport_x, 'y': viewport_y}
-    })
 
 
 # 图片分割函数已移至 split_utils.py

@@ -951,6 +951,11 @@
         #tab-imagesearch .is-debug-log-entry.error { color: #e57373; }
         #tab-imagesearch .is-debug-log-entry.warn { color: #ffb74d; }
 
+        /* 鼠标选取模式样式 */
+        body.__debug-picking * {
+            cursor: crosshair !important;
+        }
+
         #tab-imagesearch .is-footer {
             background: white;
             border-top: 1px solid #e0e0e0;
@@ -1192,6 +1197,8 @@
             <!-- 以图搜图 Tab -->
             <div class="tab-content" id="tab-imagesearch">
                 <div class="is-toast-container" id="isToastContainer"></div>
+                <!-- 服务器地址（放在header内，不会被调试模式移除） -->
+                <input type="hidden" id="isServerUrl" value="http://localhost:5277">
 
                 <div class="is-header-bar">
                     <h3>🔍 以图搜图</h3>
@@ -1317,11 +1324,58 @@
                     <div class="is-progress-text" id="isProgressText">准备中...</div>
                 </div>
 
-                <!-- 调试面板 -->
+                <!-- 调试面板（替换模式） -->
                 <div class="is-debug-panel" id="isDebugPanel">
+                    <!-- 原始内容备份容器 -->
+                    <div id="isOriginalContent" style="display: none;"></div>
+
                     <div class="is-section">
                         <div class="is-section-header">
                             <span class="is-section-title">🛠️ 调试模式</span>
+                        </div>
+
+                        <!-- 鼠标移动调试 -->
+                        <div style="margin-bottom: 15px; padding: 12px; background: #f5f7fa; border-radius: 6px;">
+                            <div style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">🖱️ 鼠标移动调试</div>
+
+                            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                                <button class="is-btn-debug" id="isDebugPickElement" style="flex: 1;">选取页面元素</button>
+                                <button class="is-btn-debug" id="isDebugCancelPick" style="flex: 1; display: none; background: #ff9800;">取消选取</button>
+                            </div>
+
+                            <div id="isDebugPickedInfo" style="display: none; margin-bottom: 10px; padding: 8px; background: #e8f5e9; border-radius: 4px; font-size: 12px;">
+                                <div>已选元素: <span id="isDebugPickedTag" style="font-weight: bold;"></span></div>
+                                <div>坐标: <span id="isDebugPickedCoords"></span></div>
+                                <div>文本: <span id="isDebugPickedText" style="color: #666;"></span></div>
+                            </div>
+
+                                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                                <div style="flex: 1;">
+                                    <label style="font-size: 11px; color: #666;">视口 X</label>
+                                    <input type="number" id="isDebugCoordX" placeholder="X" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; box-sizing: border-box;">
+                                </div>
+                                <div style="flex: 1;">
+                                    <label style="font-size: 11px; color: #666;">视口 Y</label>
+                                    <input type="number" id="isDebugCoordY" placeholder="Y" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; box-sizing: border-box;">
+                                </div>
+                                <div style="flex: 1;">
+                                    <label style="font-size: 11px; color: #666;">工具栏高度</label>
+                                    <input type="number" id="isDebugNavBarHeight" placeholder="自动检测" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; box-sizing: border-box;">
+                                </div>
+                            </div>
+
+                            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                                <button class="is-btn-debug" id="isDebugMoveMouse" style="flex: 1; background: #4caf50;">移动鼠标</button>
+                                <button class="is-btn-debug" id="isDebugClickMouse" style="flex: 1; background: #2196f3;">点击鼠标</button>
+                            </div>
+
+                            <!-- 上次点击位置 -->
+                            <div id="isDebugLastClickInfo" style="display: none; padding: 8px; background: #e3f2fd; border-radius: 4px; font-size: 12px; margin-bottom: 10px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <span>上次点击: <span id="isDebugLastClickCoords" style="font-weight: bold;"></span></span>
+                                    <button class="is-btn-debug" id="isDebugMoveToLastClick" style="padding: 4px 10px; background: #ff9800; font-size: 11px;">移动到此位置</button>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="is-debug-steps">
@@ -1388,9 +1442,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- 服务器地址（隐藏） -->
-                <input type="hidden" id="isServerUrl" value="http://localhost:5277">
 
                 <div class="is-footer" id="isFooter">
                     <span class="status" id="isStatus">就绪</span>

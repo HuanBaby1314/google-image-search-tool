@@ -40,9 +40,10 @@ echo Using: %PYTHON%
 
 echo.
 echo [2/7] Check venv...
-if not exist "venv\Scripts\python.exe" (
+set "VENV_DIR=%~dp0..\..\local-server\venv"
+if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Creating venv...
-    %PYTHON% -m venv venv
+    "%PYTHON%" -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo ERROR: Failed to create venv
         pause
@@ -53,20 +54,20 @@ if not exist "venv\Scripts\python.exe" (
     echo venv exists
 )
 
-set VENV_PIP="%~dp0venv\Scripts\pip.exe"
-set VENV_PYTHON="%~dp0venv\Scripts\python.exe"
-set VENV_PYINSTALLER="%~dp0venv\Scripts\pyinstaller.exe"
+set "VENV_PIP=%VENV_DIR%\Scripts\pip.exe"
+set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
+set "VENV_PYINSTALLER=%VENV_DIR%\Scripts\pyinstaller.exe"
 
 echo.
 echo [3/7] Install dependencies from requirements.txt...
-%VENV_PIP% install -r "%~dp0..\..\local-server\requirements.txt"
+"%VENV_PIP%" install -r "%~dp0..\..\local-server\requirements.txt"
 if errorlevel 1 (
     echo ERROR: Install requirements failed
     pause
     exit /b 1
 )
 echo Installing pyinstaller...
-%VENV_PIP% install pyinstaller
+"%VENV_PIP%" install pyinstaller
 if errorlevel 1 (
     echo ERROR: Install pyinstaller failed
     pause
@@ -76,7 +77,7 @@ echo Dependencies installed
 
 echo.
 echo [4/7] Test imports...
-%VENV_PYTHON% -c "import pystray; import PIL; import flask; import flask_sock; import pyautogui; import cv2; import numpy; import requests; print('OK')"
+"%VENV_PYTHON%" -c "import pystray; import PIL; import flask; import flask_sock; import pyautogui; import cv2; import numpy; import requests; print('OK')"
 if errorlevel 1 (
     echo ERROR: Import test failed
     pause
@@ -87,7 +88,7 @@ echo Import test passed
 echo.
 echo [5/7] Build server.exe (temp, will be embedded)...
 echo.
-%VENV_PYINSTALLER% --clean --noconfirm build.spec
+"%VENV_PYINSTALLER%" --clean --noconfirm build.spec
 if errorlevel 1 (
     echo.
     echo ERROR: Build server.exe failed
@@ -99,7 +100,7 @@ echo server.exe built
 echo.
 echo [6/7] Build uninstall.exe (temp, will be embedded)...
 echo.
-%VENV_PYINSTALLER% --clean --noconfirm uninstaller.spec
+"%VENV_PYINSTALLER%" --clean --noconfirm uninstaller.spec
 if errorlevel 1 (
     echo.
     echo ERROR: Build uninstall.exe failed
@@ -111,7 +112,7 @@ echo uninstall.exe built
 echo.
 echo [7/7] Build qingqingHelper.exe (installer, embeds server + uninstall + extensions)...
 echo.
-%VENV_PYINSTALLER% --clean --noconfirm installer.spec
+"%VENV_PYINSTALLER%" --clean --noconfirm installer.spec
 if errorlevel 1 (
     echo.
     echo ERROR: Build qingqingHelper.exe failed

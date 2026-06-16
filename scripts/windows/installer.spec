@@ -15,8 +15,11 @@ chrome_ext_dir = os.path.join(SPEC_DIR, '..', '..', 'extensions', 'qingqingHelpe
 server_exe = os.path.join(SPEC_DIR, 'dist', 'server.exe')
 uninstall_exe = os.path.join(SPEC_DIR, 'dist', 'uninstall.exe')
 
+# 获取项目根目录
+PROJECT_ROOT = os.path.abspath(os.path.join(SPEC_DIR, '..', '..'))
+
 # venv site-packages 路径
-venv_site_packages = os.path.join(SPEC_DIR, 'venv', 'Lib', 'site-packages')
+venv_site_packages = os.path.join(PROJECT_ROOT, 'local-server', 'venv', 'Lib', 'site-packages')
 
 datas = [
     (chrome_ext_dir, 'extensions/qingqingHelper'),

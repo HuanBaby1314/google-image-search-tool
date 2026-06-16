@@ -1229,7 +1229,20 @@ async function uploadToAmazonTab(prepareResult) {
         return { success: true, filename, tabId, logs };
       }
       
-      // 上传失败，重试
+      // 上传失败，检查是否是文件不存在（不需要重试）
+      if (uploadResult.error && uploadResult.error.includes('文件不存在')) {
+        logs.push(`文件不存在，跳过: ${filename}`);
+        console.error(`[Amazon搜图] 文件不存在: ${filename}，请先下载图片`);
+        try {
+          chrome.runtime.sendMessage({
+            type: 'searchError',
+            error: `文件不存在: ${filename}，请先下载图片`
+          }).catch(() => {});
+        } catch (e) {}
+        return { success: false, filename, error: uploadResult.error, logs };
+      }
+      
+      // 其他失败，重试
       logs.push(`上传失败: ${uploadResult.error}，准备重试...`);
       await wait(500);
     }
@@ -1536,7 +1549,21 @@ async function uploadToTab(prepareResult) {
         return { success: true, filename, tabId, logs };
       }
       
-      // 上传失败，重试
+      // 上传失败，检查是否是文件不存在（不需要重试）
+      if (uploadResult.error && uploadResult.error.includes('文件不存在')) {
+        logs.push(`文件不存在，跳过: ${filename}`);
+        console.error(`[搜图] 文件不存在: ${filename}，请先下载图片`);
+        // 通知用户
+        try {
+          chrome.runtime.sendMessage({
+            type: 'searchError',
+            error: `文件不存在: ${filename}，请先下载图片`
+          }).catch(() => {});
+        } catch (e) {}
+        return { success: false, filename, error: uploadResult.error, logs };
+      }
+      
+      // 其他失败，重试
       logs.push(`上传失败: ${uploadResult.error}，准备重试...`);
       await wait(500);
     }
@@ -1792,6 +1819,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     
     sendResponse({ started: true });
+    return true;
+  }
+
+  // 保存调试选取的元素到 storage
+  if (request.action === 'saveDebugPickedElement') {
+    console.log('[background] 保存选取的元素:', request.element);
+    chrome.storage.local.set({
+      debugPickedElement: request.element,
+      debugPicking: false
+    });
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // 保存调试选取状态到 storage
+  if (request.action === 'saveDebugPicking') {
+    console.log('[background] 保存选取状态:', request.picking);
+    chrome.storage.local.set({
+      debugPicking: request.picking
+    });
+    sendResponse({ success: true });
     return true;
   }
 });

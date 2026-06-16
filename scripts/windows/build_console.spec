@@ -20,7 +20,7 @@ chrome_ext_dir = os.path.join(PROJECT_ROOT, 'extensions', 'qingqingHelper')
 local_server_dir = os.path.join(PROJECT_ROOT, 'local-server')
 
 # venv site-packages 路径
-venv_site_packages = os.path.join(SPEC_DIR, 'venv', 'Lib', 'site-packages')
+venv_site_packages = os.path.join(PROJECT_ROOT, 'local-server', 'venv', 'Lib', 'site-packages')
 
 # 共享模块源文件
 upload_utils_src = os.path.join(local_server_dir, 'upload_utils.py')

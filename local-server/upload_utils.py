@@ -223,7 +223,7 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0
     """点击浏览器页面中的元素，基于元素尺寸做随机偏移"""
     if not DEPENDENCIES_OK:
         logger.error("pyautogui不可用")
-        return False
+        return False, None, None
 
     try:
         import random
@@ -243,12 +243,12 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0
         screen_x, screen_y = calculate_screen_position(adjusted_x, adjusted_y, nav_bar_height)
 
         if screen_x is None or screen_y is None:
-            return False
+            return False, None, None
 
         screen_width, screen_height = pyautogui.size()
         if screen_x < 0 or screen_x > screen_width or screen_y < 0 or screen_y > screen_height:
             logger.error(f"坐标超出屏幕范围: ({screen_x}, {screen_y})")
-            return False
+            return False, screen_x, screen_y
 
         logger.info(f"点击屏幕坐标: ({screen_x}, {screen_y})")
         pyautogui.moveTo(screen_x, screen_y, duration=0.2)
@@ -272,11 +272,11 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0
             pyautogui.click(screen_x, screen_y)
         
         time.sleep(0.5)
-        return True
+        return True, screen_x, screen_y
 
     except Exception as e:
         logger.error(f"点击失败: {e}")
-        return False
+        return False, None, None
 
 
 # ==================== 对话框检测 ====================
@@ -626,7 +626,8 @@ def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height,
 
     # 点击上传按钮
     logger.info(f"[上传] 点击按钮 ({current_x}, {current_y})")
-    if not click_at_position(current_x, current_y, nav_bar_height, button_width, button_height):
+    success, _, _ = click_at_position(current_x, current_y, nav_bar_height, button_width, button_height)
+    if not success:
         logger.warning("[上传] 点击按钮失败")
         return False
 
