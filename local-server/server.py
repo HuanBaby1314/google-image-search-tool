@@ -489,6 +489,9 @@ def get_download_dir():
 @app.route('/api/select-file-and-upload', methods=['POST'])
 def select_file_and_upload():
     """点击坐标并选择文件上传"""
+    import time as _time
+    t_start = _time.time()
+    
     data = request.json
     filename = data.get('filename', '')
     is_local = data.get('isLocal', False)
@@ -502,13 +505,16 @@ def select_file_and_upload():
     if not filename:
         return jsonify({'success': False, 'error': '文件名为空'})
 
+    timing = {}
     logger.info(f"查找文件: {filename} (isLocal={is_local})")
     logger.info(f"视口坐标: ({button_x}, {button_y}), 导航栏高度: {nav_bar_height}")
     
     if preview_only:
         logger.info("预览模式：只移动鼠标到目标位置")
 
+    t_find = _time.time()
     full_path = find_file(filename)
+    timing['find_file'] = round(_time.time() - t_find, 3)
     
     if not full_path:
         # 列出搜索目录内容，帮助调试
@@ -531,13 +537,16 @@ def select_file_and_upload():
             hover_check_fn=ws_prepare_click
         )
         
+        timing['total'] = round(_time.time() - t_start, 3)
+        
         if success:
             if preview_only:
-                return jsonify({'success': True, 'message': '预览完成，鼠标已移动到目标位置'})
+                return jsonify({'success': True, 'message': '预览完成，鼠标已移动到目标位置', 'timing': timing})
             else:
-                return jsonify({'success': True, 'message': '文件选择成功'})
+                logger.info(f"[API] 上传完成 | 耗时: {timing}")
+                return jsonify({'success': True, 'message': '文件选择成功', 'timing': timing})
         else:
-            return jsonify({'success': False, 'error': '文件选择失败'})
+            return jsonify({'success': False, 'error': '文件选择失败', 'timing': timing})
     except Exception as e:
         logger.error(f"上传失败: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
@@ -701,7 +710,7 @@ def split_image():
                 f.write(response.content)
             img = cv2.imread(str(temp_path))
         elif image_url.startswith('/images/'):
-            img_path = get_images_dir() / image_url.lstrip('/images/')
+            img_path = get_images_dir() / image_url[len('/images/'):]
             logger.info(f"[分割] 读取本地图片: {img_path}")
             if not img_path.exists():
                 return jsonify({'success': False, 'error': f'文件不存在: {img_path}'})

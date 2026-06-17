@@ -1,3 +1,9 @@
+# 分割后的图片
+local-server/images/split/
+
+# 模型文件
+local-server/models/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -5,48 +11,19 @@ __pycache__/
 *.so
 .Python
 venv/
-env/
-*.egg-info/
-dist/
-build/
-*.egg
-
-# PyInstaller
-*.manifest
-*.spec.bak
+.venv/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
-desktop.ini
 
-# Logs
-*.log
-logs/
-
-# Chrome Extension
-chrome-extension/.vscode/
-
-# Local Server
-local-server/venv/
-local-server/build/
-local-server/dist/
-local-server/__pycache__/
-local-server/*.pyc
-
-# Sensitive Data
-.env
-*.env.local
-config.local.yaml
-
-# Temporary Files
-*.tmp
-*.bak
-*.bak.*local-server/images/
+# Build
+dist/
+build/
+*.spec.bak

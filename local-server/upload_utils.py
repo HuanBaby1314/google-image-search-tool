@@ -251,8 +251,8 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0
             return False, screen_x, screen_y
 
         logger.info(f"点击屏幕坐标: ({screen_x}, {screen_y})")
-        pyautogui.moveTo(screen_x, screen_y, duration=0.2)
-        time.sleep(0.1)
+        pyautogui.moveTo(screen_x, screen_y, duration=0.05)
+        time.sleep(0.02)
         
         # 验证鼠标位置，如果没生效用 ctypes
         actual_pos = pyautogui.position()
@@ -261,7 +261,7 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0
             try:
                 import ctypes
                 ctypes.windll.user32.SetCursorPos(int(screen_x), int(screen_y))
-                time.sleep(0.05)
+                time.sleep(0.02)
                 # ctypes 鼠标点击
                 ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
                 ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
@@ -271,7 +271,7 @@ def click_at_position(viewport_x, viewport_y, nav_bar_height=85, element_width=0
         else:
             pyautogui.click(screen_x, screen_y)
         
-        time.sleep(0.5)
+        time.sleep(0.1)
         return True, screen_x, screen_y
 
     except Exception as e:
@@ -505,15 +505,15 @@ def select_file_in_dialog(file_path):
             original_clipboard = ''
 
         pyperclip.copy(file_path)
-        time.sleep(0.2)
+        time.sleep(0.05)
 
         pyautogui.hotkey('ctrl', 'a')
-        time.sleep(0.1)
+        time.sleep(0.02)
         pyautogui.hotkey('ctrl', 'v')
-        time.sleep(0.3)
+        time.sleep(0.05)
 
         pyautogui.press('enter')
-        time.sleep(0.5)
+        time.sleep(0.1)
 
         try:
             pyperclip.copy(original_clipboard)
@@ -535,14 +535,11 @@ def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height,
                            hover_check_fn=None):
     """
     文件上传流程：
-    1. 移动鼠标到上传按钮位置
-    2. 通过 WebSocket 检测 hover 元素是否是目标（需要传入 hover_check_fn）
-    3. 如果不是，使用修正坐标重试
-    4. 确认后点击上传按钮
-    5. 等待对话框出现后选择文件
+    1. 直接点击上传按钮（跳过移动鼠标预览）
+    2. 等待对话框出现后选择文件
 
     参数:
-        hover_check_fn: WebSocket hover 检测函数，签名 fn(x, y, nav_bar_height, element_info) -> dict
+        hover_check_fn: WebSocket hover 检测函数（暂不使用）
     """
     if not DEPENDENCIES_OK:
         logger.error("pyautogui不可用")
@@ -553,86 +550,28 @@ def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height,
         logger.error(f"文件不存在: {file_path}")
         return False
 
-    # 移动鼠标到上传按钮位置
+    # 按钮坐标检查
     if button_x is None or button_y is None:
         logger.warning("[上传] 按钮坐标为空，跳过点击")
         return False
 
-    logger.info(f"[上传] 移动鼠标到按钮位置 ({button_x}, {button_y})")
+    timing = {}
+    t_start = time.time()
 
-    # 先移动鼠标到目标位置（不点击）
-    moved, screen_x, screen_y = move_to_position(button_x, button_y, nav_bar_height)
+    # 直接点击上传按钮（跳过移动鼠标步骤）
+    logger.info(f"[上传] 直接点击按钮 ({button_x}, {button_y})")
+    t_click_start = time.time()
+    success, _, _ = click_at_position(button_x, button_y, nav_bar_height, button_width, button_height)
+    timing['click_button'] = round(time.time() - t_click_start, 3)
 
-    if not moved:
-        logger.warning("[上传] 移动鼠标失败")
-        return False
-
-    logger.info(f"[上传] 鼠标已移动到屏幕坐标 ({screen_x}, {screen_y})")
-
-    # 如果只是预览模式，暂停让用户确认
-    if preview_only:
-        logger.info("[上传] 预览模式：鼠标已移动到目标位置，请确认...")
-        logger.info("[上传] 等待3秒后自动继续...")
-        time.sleep(3)
-        logger.info("[上传] 预览结束")
-        return True
-
-    # WebSocket hover 检测 + 修正坐标循环
-    current_x, current_y = button_x, button_y
-    confirmed = False
-
-    if hover_check_fn:
-        for attempt in range(max_retries):
-            logger.info(f"[上传] hover 检测第 {attempt + 1} 次，坐标 ({current_x}, {current_y})")
-
-            element_info = {
-                'expected_type': 'file_upload_button',
-                'button_width': button_width,
-                'button_height': button_height
-            }
-
-            confirm_result = hover_check_fn(current_x, current_y, nav_bar_height, element_info)
-
-            if confirm_result and confirm_result.get('confirmed'):
-                logger.info("[上传] 扩展确认 hover 元素是文件上传按钮")
-                if confirm_result.get('reasons'):
-                    logger.info(f"[上传] 确认原因: {confirm_result['reasons']}")
-                confirmed = True
-                break
-
-            corrected_x = confirm_result.get('corrected_x') if confirm_result else None
-            corrected_y = confirm_result.get('corrected_y') if confirm_result else None
-
-            if corrected_x is not None and corrected_y is not None:
-                logger.info(f"[上传] 使用修正坐标: ({corrected_x}, {corrected_y})")
-                current_x, current_y = corrected_x, corrected_y
-
-                moved, screen_x, screen_y = move_to_position(current_x, current_y, nav_bar_height)
-                if not moved:
-                    logger.warning("[上传] 移动鼠标到修正位置失败")
-                    continue
-
-                logger.info(f"[上传] 鼠标已移动到修正位置 ({screen_x}, {screen_y})")
-                time.sleep(0.3)
-            else:
-                reason = confirm_result.get('reasons', ['未知原因']) if confirm_result else ['无响应']
-                logger.warning(f"[上传] 扩展未确认且无修正坐标: {reason}")
-                break
-    else:
-        logger.info("[上传] 无 hover 检测函数，跳过检测")
-
-    if not confirmed and hover_check_fn:
-        logger.warning("[上传] hover 检测未确认，使用原始坐标点击")
-
-    # 点击上传按钮
-    logger.info(f"[上传] 点击按钮 ({current_x}, {current_y})")
-    success, _, _ = click_at_position(current_x, current_y, nav_bar_height, button_width, button_height)
     if not success:
         logger.warning("[上传] 点击按钮失败")
         return False
 
     # 等待对话框出现
+    t_dialog_start = time.time()
     dialog = wait_for_file_dialog(target_title='打开', timeout=3.0, interval=0.2)
+    timing['wait_dialog'] = round(time.time() - t_dialog_start, 3)
 
     if not dialog:
         logger.warning("[上传] 对话框未出现，终止上传")
@@ -643,13 +582,18 @@ def upload_file_with_retry(file_path, button_x, button_y, nav_bar_height,
     logger.info(f"[上传] 找到对话框: '{title}'")
     if hwnd:
         focus_window(hwnd)
-        time.sleep(0.3)
+        time.sleep(0.05)
 
     # 选择文件
+    t_select_start = time.time()
     success = select_file_in_dialog(file_path)
+    timing['select_file'] = round(time.time() - t_select_start, 3)
+
+    timing['total'] = round(time.time() - t_start, 3)
+
     if success:
-        logger.info("[上传] 文件上传成功")
+        logger.info(f"[上传] 文件上传成功 | 耗时: {timing}")
         return True
-    else:
-        logger.warning("[上传] 文件选择失败")
-        return False
+
+    logger.warning(f"[上传] 文件选择失败 | 耗时: {timing}")
+    return False

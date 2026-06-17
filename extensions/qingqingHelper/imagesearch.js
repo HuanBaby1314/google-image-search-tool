@@ -742,26 +742,134 @@
     });
   }
 
+  // ==================== 预览导航 ====================
+
+  let currentPreviewIndex = -1;
+
   function showPreview(element) {
     if (previewVisible) {
       hidePreview();
       return;
     }
 
-    const overlay = document.getElementById('isPreviewOverlay');
+    const src = element.getAttribute('data-src');
+    currentPreviewIndex = images.findIndex(img => img.src === src);
+
+    updatePreviewContent(element);
+    document.getElementById('isPreviewOverlay').style.display = 'flex';
+    previewVisible = true;
+  }
+
+  function updatePreviewContent(element) {
     const previewImg = document.getElementById('isPreviewImage');
     const previewInfo = document.getElementById('isPreviewInfo');
+    const previewCounter = document.getElementById('isPreviewCounter');
 
     previewImg.src = element.getAttribute('data-src');
     previewInfo.textContent = `${element.getAttribute('data-filename')} (${element.getAttribute('data-width')}x${element.getAttribute('data-height')})`;
+    previewCounter.textContent = `${currentPreviewIndex + 1} / ${images.length}`;
 
-    overlay.style.display = 'flex';
-    previewVisible = true;
+    updateNavButtons();
+  }
+
+  function updateNavButtons() {
+    const firstBtn = document.getElementById('isPreviewFirst');
+    const prevBtn = document.getElementById('isPreviewPrev');
+    const nextBtn = document.getElementById('isPreviewNext');
+    const lastBtn = document.getElementById('isPreviewLast');
+
+    const isFirst = currentPreviewIndex <= 0;
+    const isLast = currentPreviewIndex >= images.length - 1;
+
+    firstBtn.disabled = isFirst;
+    prevBtn.disabled = isFirst;
+    nextBtn.disabled = isLast;
+    lastBtn.disabled = isLast;
+  }
+
+  function navigateToImage(index) {
+    if (index < 0 || index >= images.length) return;
+
+    currentPreviewIndex = index;
+    const img = images[index];
+
+    // 更新预览内容
+    const previewImg = document.getElementById('isPreviewImage');
+    const previewInfo = document.getElementById('isPreviewInfo');
+    const previewCounter = document.getElementById('isPreviewCounter');
+
+    previewImg.src = img.src;
+    previewInfo.textContent = `${img.filename} (${img.width}x${img.height})`;
+    previewCounter.textContent = `${currentPreviewIndex + 1} / ${images.length}`;
+
+    updateNavButtons();
+
+    // 高亮列表中对应的项
+    document.querySelectorAll('.is-image-item').forEach((item, i) => {
+      item.style.backgroundColor = i === index ? 'rgba(64, 158, 255, 0.1)' : '';
+    });
+  }
+
+  function navigateFirst() {
+    navigateToImage(0);
+  }
+
+  function navigatePrev() {
+    navigateToImage(currentPreviewIndex - 1);
+  }
+
+  function navigateNext() {
+    navigateToImage(currentPreviewIndex + 1);
+  }
+
+  function navigateLast() {
+    navigateToImage(images.length - 1);
   }
 
   function hidePreview() {
     document.getElementById('isPreviewOverlay').style.display = 'none';
     previewVisible = false;
+    currentPreviewIndex = -1;
+
+    // 清除列表高亮
+    document.querySelectorAll('.is-image-item').forEach(item => {
+      item.style.backgroundColor = '';
+    });
+  }
+
+  function initPreviewNavigation() {
+    document.getElementById('isPreviewFirst').addEventListener('click', navigateFirst);
+    document.getElementById('isPreviewPrev').addEventListener('click', navigatePrev);
+    document.getElementById('isPreviewNext').addEventListener('click', navigateNext);
+    document.getElementById('isPreviewLast').addEventListener('click', navigateLast);
+
+    // 键盘快捷键
+    document.addEventListener('keydown', (e) => {
+      if (!previewVisible) return;
+
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          navigatePrev();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          navigateNext();
+          break;
+        case 'Home':
+          e.preventDefault();
+          navigateFirst();
+          break;
+        case 'End':
+          e.preventDefault();
+          navigateLast();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          hidePreview();
+          break;
+      }
+    });
   }
 
   function toggleSelectAll(e) {
@@ -1298,6 +1406,9 @@
     document.getElementById('isPreviewOverlay').addEventListener('click', (e) => {
       if (e.target === e.currentTarget) hidePreview();
     });
+
+    // 初始化预览导航
+    initPreviewNavigation();
 
     // 监听background消息
     chrome.runtime.onMessage.addListener((message) => {

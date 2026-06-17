@@ -1030,6 +1030,94 @@
             background: rgba(255,0,0,0.6);
         }
 
+        /* 预览导航按钮 */
+        .is-preview-overlay .preview-nav {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .is-preview-overlay .preview-nav-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .is-preview-overlay .preview-nav-btn:hover {
+            background: white;
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .is-preview-overlay .preview-nav-btn:active {
+            transform: scale(0.95);
+        }
+
+        .is-preview-overlay .preview-nav-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .is-preview-overlay .preview-nav-btn:disabled:hover {
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .is-preview-overlay .preview-nav-btn svg {
+            display: block;
+            width: 20px;
+            height: 20px;
+        }
+
+        .is-preview-overlay .preview-nav-btn .nav-icon {
+            font-size: 16px;
+            color: #333;
+            line-height: 1;
+            letter-spacing: -3px;
+        }
+
+        /* Tooltip */
+        .is-preview-overlay .preview-nav-btn .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            bottom: 48px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .is-preview-overlay .preview-nav-btn:hover .tooltip {
+            opacity: 1;
+        }
+
+        /* 预览计数器 */
+        .is-preview-overlay .preview-counter {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 13px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 4px 12px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
         /* 图片分割上传区域 */
         .is-split-upload-area {
             border: 2px dashed #dcdfe6;
@@ -1454,9 +1542,31 @@
     <!-- 图片预览遮罩 -->
     <div class="is-preview-overlay" id="isPreviewOverlay">
         <div class="preview-close" id="isPreviewClose">✕</div>
+
         <div class="preview-container">
             <img id="isPreviewImage" src="" alt="">
             <div class="preview-info" id="isPreviewInfo"></div>
+            <div class="preview-counter" id="isPreviewCounter"></div>
+
+            <!-- 导航按钮 -->
+            <div class="preview-nav">
+                <button class="preview-nav-btn" id="isPreviewFirst" title="第一张">
+                    <span class="nav-icon">◀◀</span>
+                    <span class="tooltip">第一张</span>
+                </button>
+                <button class="preview-nav-btn" id="isPreviewPrev" title="上一张">
+                    <span class="nav-icon">◀</span>
+                    <span class="tooltip">上一张</span>
+                </button>
+                <button class="preview-nav-btn" id="isPreviewNext" title="下一张">
+                    <span class="nav-icon">▶</span>
+                    <span class="tooltip">下一张</span>
+                </button>
+                <button class="preview-nav-btn" id="isPreviewLast" title="最后一张">
+                    <span class="nav-icon">▶▶</span>
+                    <span class="tooltip">最后一张</span>
+                </button>
+            </div>
         </div>
     </div>
 

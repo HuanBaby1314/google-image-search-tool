@@ -1418,7 +1418,7 @@ async function uploadToTab(prepareResult) {
   try {
     // 激活tab
     await chrome.tabs.update(tabId, { active: true });
-    await wait(500);
+    await wait(200);
     
     let buttonResult = null;
     
@@ -1451,13 +1451,13 @@ async function uploadToTab(prepareResult) {
         if (!searchResult[0]?.result?.success) {
           logs.push('重新点击以图搜图失败');
           if (attempt < MAX_RETRIES) {
-            await wait(1000);
+            await wait(500);
             continue;
           }
           throw new Error('无法打开以图搜图视图');
         }
         
-        await wait(1500);
+        await wait(800);
         
         // 重新点击"上传文件"
         await chrome.scripting.executeScript({
@@ -1466,7 +1466,7 @@ async function uploadToTab(prepareResult) {
           world: 'MAIN'
         });
         
-        await wait(1000);
+        await wait(500);
         
         // 重新获取坐标
         result = await chrome.scripting.executeScript({
@@ -1480,7 +1480,7 @@ async function uploadToTab(prepareResult) {
         if (!buttonResult || !buttonResult.success) {
           logs.push('重新获取坐标仍然失败');
           if (attempt < MAX_RETRIES) {
-            await wait(500);
+            await wait(300);
             continue;
           }
           throw new Error('获取文件选择按钮坐标失败');
@@ -1488,8 +1488,6 @@ async function uploadToTab(prepareResult) {
       }
       
       logs.push('按钮坐标: (' + buttonResult.viewport.x + ', ' + buttonResult.viewport.y + ')');
-      
-      await wait(300);
       
       // 通知服务器点击坐标并选择文件
       logs.push('服务器点击坐标');
@@ -1511,9 +1509,13 @@ async function uploadToTab(prepareResult) {
       const uploadResult = await uploadResponse.json();
       logs.push('服务器响应: ' + JSON.stringify(uploadResult));
       
+      if (uploadResult.timing) {
+        console.log(`[搜图] ${filename} 服务器耗时:`, uploadResult.timing);
+      }
+      
       if (uploadResult.success) {
-        // 上传成功，点击搜索按钮后直接返回
-        await wait(2000);
+        // 上传成功，等待文件对话框关闭后点击搜索
+        await wait(500);
         
         // 点击搜索按钮
         logs.push('点击搜索按钮');
@@ -1527,7 +1529,6 @@ async function uploadToTab(prepareResult) {
           logs.push('搜索按钮未找到，可能已自动提交');
         }
         
-        // 不等待页面加载，直接更新记录并返回
         // 异步更新URL记录
         setTimeout(async () => {
           try {
@@ -1543,7 +1544,7 @@ async function uploadToTab(prepareResult) {
           } catch (e) {
             console.log('[搜图] 异步更新URL失败:', e);
           }
-        }, 5000);
+        }, 3000);
         
         logs.push('搜图完成!');
         return { success: true, filename, tabId, logs };
@@ -1553,7 +1554,6 @@ async function uploadToTab(prepareResult) {
       if (uploadResult.error && uploadResult.error.includes('文件不存在')) {
         logs.push(`文件不存在，跳过: ${filename}`);
         console.error(`[搜图] 文件不存在: ${filename}，请先下载图片`);
-        // 通知用户
         try {
           chrome.runtime.sendMessage({
             type: 'searchError',
@@ -1565,7 +1565,7 @@ async function uploadToTab(prepareResult) {
       
       // 其他失败，重试
       logs.push(`上传失败: ${uploadResult.error}，准备重试...`);
-      await wait(500);
+      await wait(300);
     }
     
     throw new Error(`${MAX_RETRIES} 次尝试后仍失败`);
@@ -1618,7 +1618,7 @@ async function executeBatchGoogleSearch(images) {
   
   console.log('[搜图] 需要搜图的图片:', imagesToSearch.length, '张');
   
-  // ========== 阶段1: 准备Tab（第一个创建，后续复制） ==========
+  // ========== 阶段1: 并行创建所有Tab ==========
   chrome.runtime.sendMessage({
     type: 'searchPhase',
     phase: 'prepare',
@@ -1626,7 +1626,6 @@ async function executeBatchGoogleSearch(images) {
   }).catch(() => {});
   
   const prepareResults = [];
-  let firstTabId = null;
   
   // 第一个tab：正常创建并准备
   chrome.runtime.sendMessage({
@@ -1641,12 +1640,12 @@ async function executeBatchGoogleSearch(images) {
   const firstResult = await prepareSearchTab(imagesToSearch[0]);
   prepareResults.push(firstResult);
   
+  let firstTabId = null;
   if (firstResult.success) {
     firstTabId = firstResult.tabId;
     console.log('[搜图] 第一个Tab准备完成，tabId:', firstTabId);
   } else {
     console.error('[搜图] 第一个Tab准备失败，无法复制后续Tab');
-    // 如果第一个失败，后续全部标记失败
     for (let i = 1; i < imagesToSearch.length; i++) {
       prepareResults.push({ 
         success: false, 
@@ -1656,26 +1655,30 @@ async function executeBatchGoogleSearch(images) {
     }
   }
   
-  // 后续tab：通过复制第一个tab创建
-  if (firstTabId) {
+  // 后续tab：并行复制（使用 Promise.all 同时创建）
+  if (firstTabId && imagesToSearch.length > 1) {
+    console.log('[搜图] 并行复制剩余', imagesToSearch.length - 1, '个Tab...');
+    
+    const duplicatePromises = [];
     for (let i = 1; i < imagesToSearch.length; i++) {
-      chrome.runtime.sendMessage({
-        type: 'searchProgress',
-        phase: 'prepare',
-        current: i + 1,
-        total: imagesToSearch.length,
-        filename: imagesToSearch[i].filename
-      }).catch(() => {});
-      
-      console.log('[搜图] 复制Tab:', imagesToSearch[i].filename);
-      const result = await duplicateSearchTab(firstTabId, imagesToSearch[i]);
-      prepareResults.push(result);
-      
-      // 短暂间隔
-      if (i < imagesToSearch.length - 1) {
-        await wait(300);
-      }
+      const promise = (async () => {
+        chrome.runtime.sendMessage({
+          type: 'searchProgress',
+          phase: 'prepare',
+          current: i + 1,
+          total: imagesToSearch.length,
+          filename: imagesToSearch[i].filename
+        }).catch(() => {});
+        
+        const result = await duplicateSearchTab(firstTabId, imagesToSearch[i]);
+        return result;
+      })();
+      duplicatePromises.push(promise);
     }
+    
+    // 等待所有Tab创建完成
+    const duplicateResults = await Promise.all(duplicatePromises);
+    prepareResults.push(...duplicateResults);
   }
   
   const preparedTabs = prepareResults.filter(r => r.success);
@@ -1713,14 +1716,16 @@ async function executeBatchGoogleSearch(images) {
     
     console.log('[搜图] 开始上传:', tab.filename, '(' + (i+1) + '/' + preparedTabs.length + ')');
     
+    const t_upload_start = Date.now();
     const result = await uploadToTab(tab);
+    const t_upload_elapsed = ((Date.now() - t_upload_start) / 1000).toFixed(2);
     results.push(result);
     
-    console.log('[搜图] 上传完成:', tab.filename, result.success ? '成功' : '失败');
+    console.log('[搜图] 上传完成:', tab.filename, result.success ? '成功' : '失败', `耗时: ${t_upload_elapsed}s`);
     
-    // 间隔一下再处理下一个
+    // 短暂间隔再处理下一个（让浏览器有时间处理）
     if (i < preparedTabs.length - 1) {
-      await wait(1000);
+      await wait(200);
     }
   }
   
