@@ -14,6 +14,8 @@
   let debugMode = false;
   let previewVisible = false;
   let currentToast = null;
+  let uploadMode = 'cdp'; // 'cdp' 或 'pyautogui'
+  let memoryCheckEnabled = false; // 内存检测开关（默认关闭）
 
   // ==================== Toast通知 ====================
 
@@ -56,15 +58,20 @@
   function toggleDebugMode() {
     debugMode = !debugMode;
     const panel = document.getElementById('isDebugPanel');
-    const toggle = document.getElementById('isDebugToggle');
+    const mainContent = document.getElementById('isMainContent');
+    const settingsDebug = document.getElementById('isSettingsDebug');
 
     if (debugMode) {
-      panel.classList.add('visible');
-      toggle.classList.add('active');
+      // 显示调试面板，隐藏主内容
+      panel.style.display = 'block';
+      mainContent.style.display = 'none';
+      if (settingsDebug) settingsDebug.checked = true;
       debugLog('调试模式已启用', 'info');
     } else {
-      panel.classList.remove('visible');
-      toggle.classList.remove('active');
+      // 隐藏调试面板，显示主内容
+      panel.style.display = 'none';
+      mainContent.style.display = 'block';
+      if (settingsDebug) settingsDebug.checked = false;
     }
   }
 
@@ -105,6 +112,102 @@
 
   function getDebugFilename() {
     return document.getElementById('isDebugFilename')?.value?.trim() || '';
+  }
+
+  // ==================== 上传模式管理 ====================
+
+  async function loadUploadMode() {
+    try {
+      const response = await chrome.runtime.sendMessage({ action: 'getUploadMode' });
+      if (response?.mode) {
+        uploadMode = response.mode;
+      }
+    } catch (e) {
+      console.log('[模式] 加载模式失败，使用默认 CDP');
+    }
+    // 更新设置面板中的开关
+    const settingsCDP = document.getElementById('isSettingsCDP');
+    if (settingsCDP) settingsCDP.checked = (uploadMode === 'cdp');
+  }
+
+  function updateModeIndicator() {
+    const indicator = document.getElementById('isModeIndicator');
+    const label = document.getElementById('isModeLabel');
+
+    if (!indicator || !label) return;
+
+    if (uploadMode === 'cdp') {
+      indicator.className = 'mode-indicator mode-cdp';
+      label.textContent = 'CDP';
+      indicator.title = 'CDP 模式: 纯 Chrome 调试协议，无需 Python 服务';
+    } else {
+      indicator.className = 'mode-indicator mode-pyautogui';
+      label.textContent = 'PyAuto';
+      indicator.title = 'PyAutoGUI 模式: 需要 Python 本地服务运行';
+    }
+  }
+
+  async function toggleUploadMode() {
+    const newMode = uploadMode === 'cdp' ? 'pyautogui' : 'cdp';
+
+    try {
+      await chrome.runtime.sendMessage({ action: 'setUploadMode', mode: newMode });
+      uploadMode = newMode;
+      updateModeIndicator();
+      updateButtons(); // 更新按钮状态（CDP 模式不需要服务器在线）
+
+      const modeName = newMode === 'cdp' ? 'CDP (纯Chrome)' : 'PyAutoGUI (服务器)';
+      showToast(`已切换到 ${modeName} 模式`, 'success');
+    } catch (e) {
+      showToast('切换模式失败: ' + e.message, 'error');
+    }
+  }
+
+  // ==================== 内存检测开关 ====================
+
+  async function loadMemoryCheckSetting() {
+    try {
+      const response = await chrome.runtime.sendMessage({ action: 'getMemoryCheckEnabled' });
+      if (response?.enabled !== undefined) {
+        memoryCheckEnabled = response.enabled;
+      }
+    } catch (e) {
+      console.log('[内存] 加载设置失败，使用默认值');
+    }
+    // 更新设置面板中的开关
+    const settingsMemory = document.getElementById('isSettingsMemory');
+    if (settingsMemory) settingsMemory.checked = memoryCheckEnabled;
+  }
+
+  function updateMemoryIndicator() {
+    const indicator = document.getElementById('isMemoryIndicator');
+    const label = document.getElementById('isMemoryLabel');
+
+    if (!indicator || !label) return;
+
+    if (memoryCheckEnabled) {
+      indicator.className = 'memory-indicator memory-on';
+      label.textContent = '内存✓';
+      indicator.title = '内存检测已开启（点击关闭）';
+    } else {
+      indicator.className = 'memory-indicator memory-off';
+      label.textContent = '内存';
+      indicator.title = '内存检测已关闭（点击开启）';
+    }
+  }
+
+  async function toggleMemoryCheck() {
+    const newValue = !memoryCheckEnabled;
+
+    try {
+      await chrome.runtime.sendMessage({ action: 'setMemoryCheckEnabled', enabled: newValue });
+      memoryCheckEnabled = newValue;
+      updateMemoryIndicator();
+
+      showToast(newValue ? '内存检测已开启' : '内存检测已关闭', 'success');
+    } catch (e) {
+      showToast('切换内存检测失败: ' + e.message, 'error');
+    }
   }
 
   async function debugTestSelector() {
@@ -388,7 +491,6 @@
       if (files.length === 0) return;
 
       let addedCount = 0;
-      const serverUrl = document.getElementById('isServerUrl').value;
 
       for (const file of files) {
         if (images.some(img => img.filename === file.name && img.source === 'local')) {
@@ -397,40 +499,25 @@
 
         try {
           const base64 = await readFileAsBase64(file);
+          const dimensions = await getImageDimensions(base64);
 
-          const response = await fetch(`${serverUrl}/api/save-local-image`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              fileData: base64
-            }),
-            signal: AbortSignal.timeout(10000)
+          // 保存 base64 用于预览，搜图时再上传服务器
+          images.push({
+            src: base64,
+            filename: file.name,
+            width: dimensions.width,
+            height: dimensions.height,
+            alt: file.name,
+            source: 'local',
+            isLocal: true,
+            base64: base64,  // 保存用于后续上传
+            serverPath: null  // 搜图时上传后才有
           });
 
-          const result = await response.json();
-
-          if (result.success) {
-            const imageUrl = `${serverUrl}${result.url}`;
-            const dimensions = await getImageDimensions(imageUrl);
-
-            images.push({
-              src: imageUrl,
-              filename: file.name,
-              width: dimensions.width,
-              height: dimensions.height,
-              alt: file.name,
-              source: 'local',
-              isLocal: true
-            });
-
-            addedCount++;
-          } else {
-            showToast(`上传失败: ${file.name}`, 'error');
-          }
+          addedCount++;
         } catch (error) {
-          console.error('上传本地图片失败:', error);
-          showToast(`上传失败: ${file.name}`, 'error');
+          console.error('加载本地图片失败:', error);
+          showToast(`加载失败: ${file.name}`, 'error');
         }
       }
 
@@ -885,8 +972,10 @@
     document.getElementById('isSelectLocalBtn').disabled = false;
     document.getElementById('isClearImagesBtn').disabled = images.length === 0;
     document.getElementById('isDownloadBtn').disabled = !hasSelection || isSearching;
-    document.getElementById('isSearchBtn').disabled = !hasSelection || !serverOnline || isSearching;
-    document.getElementById('isAmazonSearchBtn').disabled = !hasSelection || !serverOnline || isSearching;
+    // CDP 模式不需要服务器在线即可搜图
+    document.getElementById('isSearchBtn').disabled = !hasSelection || isSearching;
+    document.getElementById('isAmazonSearchBtn').disabled = !hasSelection || isSearching;
+    document.getElementById('isAllSearchBtn').disabled = !hasSelection || isSearching;
   }
 
   function getSelectedImages() {
@@ -1106,6 +1195,35 @@
     }
   }
 
+  // 查找本地文件路径（搜图前调用）
+  async function findLocalFilePath(img) {
+    if (img.serverPath) return img.serverPath; // 已有路径
+    if (!serverOnline) return null; // 服务器离线
+
+    const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
+
+    try {
+      // 使用服务器的 find_file 接口查找文件
+      const response = await fetch(`${serverUrl}/api/check-file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: img.filename }),
+        signal: AbortSignal.timeout(5000)
+      });
+
+      const result = await response.json();
+      if (result.exists && result.path) {
+        img.serverPath = result.path;
+        console.log('[查找] 找到本地文件:', img.filename, result.path);
+        return result.path;
+      }
+    } catch (e) {
+      console.error('[查找] 查找失败:', img.filename, e.message);
+    }
+
+    return null;
+  }
+
   // ==================== 下载 ====================
 
   async function downloadSelected() {
@@ -1233,8 +1351,9 @@
       return;
     }
 
-    if (!serverOnline) {
-      showToast('服务器未连接，请先启动本地服务器', 'error');
+    // CDP 模式不需要服务器在线，PyAutoGUI 模式需要
+    if (uploadMode === 'pyautogui' && !serverOnline) {
+      showToast('PyAutoGUI 模式需要服务器在线，请先启动本地服务器或切换到 CDP 模式', 'error');
       return;
     }
 
@@ -1246,13 +1365,14 @@
     isSearching = true;
     const btn = document.getElementById('isSearchBtn');
     btn.disabled = true;
-    btn.textContent = '处理中...';
+    btn.textContent = '...';
 
+    // CDP 模式下，如果有服务器则先下载图片获取路径；无服务器则直接搜图
     const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
 
-    console.log('[搜图] 选中:', selected.length, '需下载:', toDownload.length, '已下载:', downloadedFiles.length);
+    console.log('[搜图] 模式:', uploadMode, '选中:', selected.length, '需下载:', toDownload.length, '已下载:', downloadedFiles.length);
 
-    if (toDownload.length > 0) {
+    if (toDownload.length > 0 && serverOnline) {
       showToast(`正在下载 ${toDownload.length} 张图片到安装目录...`, 'info');
 
       const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
@@ -1286,17 +1406,30 @@
       await saveState();
       updateDownloadCount();
       renderImageList();
+    } else if (toDownload.length > 0 && !serverOnline && uploadMode === 'cdp') {
+      // CDP 模式且服务器离线：提示用户文件需要已存在
+      showToast('服务器离线，CDP 模式需要图片文件已下载到本地', 'info');
     } else {
       console.log('[搜图] 无需下载，直接开始搜图');
     }
 
-    showToast('开始搜图流程...', 'info');
+    // 查找本地文件路径
+    const needFind = selected.filter(img => img.source === 'local' && !img.serverPath);
+    if (needFind.length > 0 && serverOnline) {
+      showToast(`正在查找 ${needFind.length} 张本地文件路径...`, 'info');
+      for (const img of needFind) {
+        await findLocalFilePath(img);
+      }
+    }
+
+    showToast(`开始搜图流程... [${uploadMode === 'cdp' ? 'CDP' : 'PyAutoGUI'}模式]`, 'info');
 
     chrome.runtime.sendMessage({
       action: 'startGoogleSearch',
       images: selected.map(img => ({
         filename: img.filename,
-        isLocal: img.source === 'local'
+        isLocal: img.source === 'local',
+        serverPath: img.serverPath || null
       }))
     });
   }
@@ -1310,8 +1443,9 @@
       return;
     }
 
-    if (!serverOnline) {
-      showToast('服务器未连接，请先启动本地服务器', 'error');
+    // CDP 模式不需要服务器在线
+    if (uploadMode === 'pyautogui' && !serverOnline) {
+      showToast('PyAutoGUI 模式需要服务器在线，请先启动本地服务器或切换到 CDP 模式', 'error');
       return;
     }
 
@@ -1323,13 +1457,13 @@
     isSearching = true;
     const btn = document.getElementById('isAmazonSearchBtn');
     btn.disabled = true;
-    btn.textContent = '处理中...';
+    btn.textContent = '...';
 
     const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
 
-    console.log('[Amazon搜图] 选中:', selected.length, '需下载:', toDownload.length, '已下载:', downloadedFiles.length);
+    console.log('[Amazon搜图] 模式:', uploadMode, '选中:', selected.length, '需下载:', toDownload.length);
 
-    if (toDownload.length > 0) {
+    if (toDownload.length > 0 && serverOnline) {
       showToast(`正在下载 ${toDownload.length} 张图片到安装目录...`, 'info');
 
       const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
@@ -1338,18 +1472,14 @@
 
       for (const img of toDownload) {
         try {
-          console.log('[Amazon搜图] 下载:', img.filename, img.src);
           const result = await downloadImageToServer(img);
-          console.log('[Amazon搜图] 下载结果:', img.filename, result);
           if (result.success) {
             downloadedFiles.push({ filename: result.filename, url: img.src, localUrl: result.localUrl });
             downloadSuccess++;
           } else {
-            console.error('下载失败:', img.src, result.error);
             downloadFail++;
           }
         } catch (error) {
-          console.error('下载异常:', img.src, error);
           downloadFail++;
         }
       }
@@ -1363,11 +1493,13 @@
       await saveState();
       updateDownloadCount();
       renderImageList();
+    } else if (toDownload.length > 0 && !serverOnline && uploadMode === 'cdp') {
+      showToast('服务器离线，CDP 模式需要图片文件已下载到本地', 'info');
     } else {
       console.log('[Amazon搜图] 无需下载，直接开始搜图');
     }
 
-    showToast('开始Amazon搜图流程...', 'info');
+    showToast(`开始Amazon搜图流程... [${uploadMode === 'cdp' ? 'CDP' : 'PyAutoGUI'}模式]`, 'info');
 
     chrome.runtime.sendMessage({
       action: 'startAmazonSearch',
@@ -1376,6 +1508,152 @@
         isLocal: img.source === 'local'
       }))
     });
+  }
+
+  // ==================== 全平台搜图 ====================
+
+  async function startAllPlatformSearch() {
+    const selected = getSelectedImages();
+    if (selected.length === 0) {
+      showToast('请先选择图片', 'error');
+      return;
+    }
+
+    // CDP 模式不需要服务器在线
+    if (uploadMode === 'pyautogui' && !serverOnline) {
+      showToast('PyAutoGUI 模式需要服务器在线，请先启动本地服务器或切换到 CDP 模式', 'error');
+      return;
+    }
+
+    if (isSearching) {
+      showToast('正在处理中，请等待...', 'info');
+      return;
+    }
+
+    isSearching = true;
+    const btn = document.getElementById('isAllSearchBtn');
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    const toDownload = selected.filter(img => img.source !== 'local' && !isImageDownloaded(img.src));
+
+    console.log('[全平台] 模式:', uploadMode, '选中:', selected.length, '需下载:', toDownload.length);
+
+    if (toDownload.length > 0 && serverOnline) {
+      showToast(`正在下载 ${toDownload.length} 张图片到安装目录...`, 'info');
+
+      const serverUrl = document.getElementById('isServerUrl')?.value || 'http://localhost:5277';
+      let downloadSuccess = 0;
+      let downloadFail = 0;
+
+      for (const img of toDownload) {
+        try {
+          const result = await downloadImageToServer(img);
+          if (result.success) {
+            downloadedFiles.push({ filename: result.filename, url: img.src, localUrl: result.localUrl });
+            downloadSuccess++;
+          } else {
+            downloadFail++;
+          }
+        } catch (error) {
+          downloadFail++;
+        }
+      }
+
+      if (downloadFail > 0) {
+        showToast(`下载完成: ${downloadSuccess} 成功, ${downloadFail} 失败`, 'error');
+      } else {
+        showToast(`成功下载 ${downloadSuccess} 张图片`, 'success');
+      }
+
+      await saveState();
+      updateDownloadCount();
+      renderImageList();
+    } else if (toDownload.length > 0 && !serverOnline && uploadMode === 'cdp') {
+      showToast('服务器离线，CDP 模式需要图片文件已下载到本地', 'info');
+    } else {
+      console.log('[全平台] 无需下载，直接开始搜图');
+    }
+
+    // 查找本地文件路径
+    const needFind = selected.filter(img => img.source === 'local' && !img.serverPath);
+    if (needFind.length > 0 && serverOnline) {
+      showToast(`正在查找 ${needFind.length} 张本地文件路径...`, 'info');
+      for (const img of needFind) {
+        await findLocalFilePath(img);
+      }
+    }
+
+    showToast(`开始全平台搜图... [${uploadMode === 'cdp' ? 'CDP' : 'PyAuto'}模式]`, 'info');
+
+    chrome.runtime.sendMessage({
+      action: 'startAllPlatformSearch',
+      images: selected.map(img => ({
+        filename: img.filename,
+        isLocal: img.source === 'local',
+        serverPath: img.serverPath || null
+      }))
+    });
+  }
+
+  // ==================== 设置下拉菜单 ====================
+
+  function initSettingsDropdown() {
+    const settingsBtn = document.getElementById('isSettingsBtn');
+    const settingsPanel = document.getElementById('isSettingsPanel');
+    const settingsCDP = document.getElementById('isSettingsCDP');
+    const settingsMemory = document.getElementById('isSettingsMemory');
+    const settingsDebug = document.getElementById('isSettingsDebug');
+
+    // 设置按钮点击 - 切换下拉面板
+    settingsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      settingsPanel.classList.toggle('show');
+    });
+
+    // 点击外部关闭下拉面板
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.settings-dropdown')) {
+        settingsPanel.classList.remove('show');
+      }
+    });
+
+    // CDP 模式切换
+    settingsCDP.addEventListener('change', async () => {
+      const newMode = settingsCDP.checked ? 'cdp' : 'pyautogui';
+      try {
+        await chrome.runtime.sendMessage({ action: 'setUploadMode', mode: newMode });
+        uploadMode = newMode;
+        showToast(newMode === 'cdp' ? '已切换到 CDP 模式' : '已切换到 PyAutoGUI 模式', 'success');
+      } catch (e) {
+        showToast('切换模式失败: ' + e.message, 'error');
+        settingsCDP.checked = !settingsCDP.checked; // 回滚
+      }
+    });
+
+    // 内存检测切换
+    settingsMemory.addEventListener('change', async () => {
+      try {
+        await chrome.runtime.sendMessage({ action: 'setMemoryCheckEnabled', enabled: settingsMemory.checked });
+        memoryCheckEnabled = settingsMemory.checked;
+        showToast(settingsMemory.checked ? '内存检测已开启' : '内存检测已关闭', 'success');
+      } catch (e) {
+        showToast('切换内存检测失败: ' + e.message, 'error');
+        settingsMemory.checked = !settingsMemory.checked; // 回滚
+      }
+    });
+
+    // 调试模式切换
+    settingsDebug.addEventListener('change', () => {
+      if (settingsDebug.checked !== debugMode) {
+        toggleDebugMode();
+      }
+    });
+
+    // 初始化开关状态
+    settingsCDP.checked = (uploadMode === 'cdp');
+    settingsMemory.checked = memoryCheckEnabled;
+    settingsDebug.checked = debugMode;
   }
 
   // ==================== 绑定事件 ====================
@@ -1388,11 +1666,16 @@
     document.getElementById('isDownloadBtn').addEventListener('click', downloadSelected);
     document.getElementById('isSearchBtn').addEventListener('click', startGoogleSearch);
     document.getElementById('isAmazonSearchBtn').addEventListener('click', startAmazonSearch);
+    document.getElementById('isAllSearchBtn').addEventListener('click', startAllPlatformSearch);
     document.getElementById('isSelectAll').addEventListener('change', toggleSelectAll);
     document.getElementById('isClearDownloadBtn').addEventListener('click', clearDownloadedFiles);
 
-    // 调试按钮
-    document.getElementById('isDebugToggle').addEventListener('click', toggleDebugMode);
+    // 设置下拉菜单
+    initSettingsDropdown();
+
+    // 调试按钮（保留兼容）
+    const debugToggle = document.getElementById('isDebugToggle');
+    if (debugToggle) debugToggle.addEventListener('click', toggleDebugMode);
     document.getElementById('isDebugTestSelectorBtn').addEventListener('click', debugTestSelector);
     document.getElementById('isDebugInspectPageBtn').addEventListener('click', debugInspectPage);
     document.getElementById('isDebugClearLogBtn').addEventListener('click', debugClearLog);
@@ -1425,15 +1708,17 @@
           : `全部 ${message.successCount} 张图片搜图完成!`;
         showToast(msg, message.failCount > 0 ? 'info' : 'success');
         updateButtons();
-        document.getElementById('isSearchBtn').textContent = 'Google搜图';
-        document.getElementById('isAmazonSearchBtn').textContent = 'Amazon搜图';
+        document.getElementById('isSearchBtn').textContent = 'Google';
+        document.getElementById('isAmazonSearchBtn').textContent = 'Amazon';
+        document.getElementById('isAllSearchBtn').textContent = '全平台';
       }
       if (message.type === 'searchError') {
         isSearching = false;
         showToast('搜图失败: ' + message.error, 'error');
         updateButtons();
-        document.getElementById('isSearchBtn').textContent = 'Google搜图';
-        document.getElementById('isAmazonSearchBtn').textContent = 'Amazon搜图';
+        document.getElementById('isSearchBtn').textContent = 'Google';
+        document.getElementById('isAmazonSearchBtn').textContent = 'Amazon';
+        document.getElementById('isAllSearchBtn').textContent = '全平台';
       }
     });
 
@@ -1458,7 +1743,13 @@
       if (settings.serverUrl) {
         document.getElementById('isServerUrl').value = settings.serverUrl;
       }
-      initImageSearchTab();
+      // 加载上传模式和内存检测设置
+      Promise.all([
+        loadUploadMode(),
+        loadMemoryCheckSetting()
+      ]).then(() => {
+        initImageSearchTab();
+      });
     });
   });
 

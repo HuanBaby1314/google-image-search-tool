@@ -13,6 +13,116 @@ let serverStatus = {
 // 记录已执行搜图的图片 { filename: { tabId, url, timestamp } }
 let searchedImages = new Map();
 
+// ==================== 内存检测 ====================
+
+// 内存检测开关（默认关闭）
+let memoryCheckEnabled = false;
+
+// 从存储加载内存检测开关状态
+async function loadMemoryCheckSetting() {
+  const settings = await chrome.storage.local.get(['memoryCheckEnabled']);
+  memoryCheckEnabled = settings.memoryCheckEnabled === true;
+  console.log('[内存] 检测开关:', memoryCheckEnabled ? '开启' : '关闭');
+}
+
+// 设置内存检测开关
+async function setMemoryCheckEnabled(enabled) {
+  memoryCheckEnabled = enabled;
+  await chrome.storage.local.set({ memoryCheckEnabled: enabled });
+  console.log('[内存] 检测开关已', enabled ? '开启' : '关闭');
+}
+
+// 每个 tab 预估内存占用 (MB) - 保守估计
+const MEMORY_PER_TAB = {
+  google: 350,  // Google 搜图页面（含图片加载）
+  amazon: 450   // Amazon 搜图页面（更重）
+};
+
+// 最低保留可用内存 (MB)
+const MIN_RESERVED_MEMORY = 2048; // 2GB
+
+// 最大同时搜图 tab 数量限制
+const MAX_CONCURRENT_TABS = {
+  single: 30,  // 单平台
+  all: 60      // 全平台
+};
+
+/**
+ * 检查内存是否足够执行搜图任务
+ * @param {string} platform - 'google' | 'amazon' | 'all'
+ * @param {number} imageCount - 图片数量
+ * @returns {Promise<{sufficient: boolean, available: number, required: number, tabsToClose: number, message: string}>}
+ */
+async function checkMemoryForTask(platform, imageCount) {
+  // 如果内存检测关闭，直接通过
+  if (!memoryCheckEnabled) {
+    return {
+      sufficient: true,
+      available: -1,
+      required: -1,
+      tabsToClose: 0,
+      message: '内存检测已关闭'
+    };
+  }
+
+  try {
+    const memInfo = await chrome.system.memory.getInfo();
+    const availableMB = Math.round(memInfo.availableCapacity / 1024 / 1024);
+
+    // 检查数量限制
+    const maxTabs = platform === 'all' ? MAX_CONCURRENT_TABS.all : MAX_CONCURRENT_TABS.single;
+    if (imageCount > maxTabs) {
+      return {
+        sufficient: false,
+        available: availableMB,
+        required: 0,
+        tabsToClose: 0,
+        message: `单次最多支持 ${maxTabs} 张图片${platform === 'all' ? '全平台' : ''}搜图，当前选择了 ${imageCount} 张`
+      };
+    }
+
+    // 计算需要创建的 tab 数量
+    let tabsToCreate = platform === 'all' ? imageCount * 2 : imageCount;
+
+    // 计算所需内存
+    let memoryPerTab = MEMORY_PER_TAB.google;
+    if (platform === 'amazon') memoryPerTab = MEMORY_PER_TAB.amazon;
+    if (platform === 'all') memoryPerTab = MEMORY_PER_TAB.google + MEMORY_PER_TAB.amazon;
+
+    const requiredMB = tabsToCreate * memoryPerTab + MIN_RESERVED_MEMORY;
+    const surplus = availableMB - requiredMB;
+
+    if (surplus < 0) {
+      const tabsToClose = Math.ceil(Math.abs(surplus) / 350);
+      return {
+        sufficient: false,
+        available: availableMB,
+        required: requiredMB,
+        tabsToClose,
+        message: `内存不足！可用 ${availableMB}MB，需要约 ${requiredMB}MB。请先关闭 ${tabsToClose} 个标签页后再试。`
+      };
+    }
+
+    return {
+      sufficient: true,
+      available: availableMB,
+      required: requiredMB,
+      tabsToClose: 0,
+      message: `内存充足（可用 ${availableMB}MB，需要 ${requiredMB}MB）`
+    };
+
+  } catch (error) {
+    console.error('[内存] 检测失败:', error);
+    return {
+      sufficient: true,
+      available: -1,
+      required: -1,
+      tabsToClose: 0,
+      message: '内存检测失败，跳过检查'
+    };
+  }
+}
+
 // ==================== WebSocket 客户端 ====================
 
 let ws = null;
@@ -413,10 +523,11 @@ function showNotification(title, message) {
   }
 }
 
-function notifySearchComplete(total, successCount, failCount) {
-  let title = '搜图任务完成';
+function notifySearchComplete(total, successCount, failCount, platform) {
+  const platformName = platform === 'google' ? 'Google' : platform === 'amazon' ? 'Amazon' : '全平台';
+  let title = `${platformName} 搜图任务完成`;
   let parts = [];
-  
+
   if (total > 0) {
     parts.push(`共 ${total} 张`);
   }
@@ -426,12 +537,12 @@ function notifySearchComplete(total, successCount, failCount) {
   if (failCount > 0) {
     parts.push(`失败 ${failCount} 张`);
   }
-  
+
   let message = parts.join('，');
   if (!message) {
     message = '任务已完成';
   }
-  
+
   showNotification(title, message);
 }
 
@@ -571,6 +682,361 @@ function waitForTabComplete(tabId) {
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ==================== 上传模式管理 ====================
+
+// 获取上传模式: 'cdp' 或 'pyautogui'
+async function getUploadMode() {
+  const settings = await chrome.storage.local.get(['uploadMode']);
+  return settings.uploadMode || 'cdp'; // 默认 CDP 模式
+}
+
+// 设置上传模式
+async function setUploadMode(mode) {
+  await chrome.storage.local.set({ uploadMode: mode });
+  console.log('[模式] 已切换到:', mode);
+}
+
+// ==================== CDP 文件上传 ====================
+
+/**
+ * 通过 CDP 获取文件的本地绝对路径
+ * @param {string} filename - 文件名
+ * @param {string|null} serverPath - 服务器上的绝对路径（本地图片上传时保存的）
+ * @returns {Promise<string|null>} - 文件绝对路径或 null
+ */
+async function getFilePathForCDP(filename, serverPath) {
+  // 优先使用 serverPath（本地图片上传时保存的绝对路径）
+  if (serverPath) {
+    console.log('[CDP] 使用 serverPath:', serverPath);
+    return serverPath;
+  }
+
+  const settings = await chrome.storage.local.get(['serverUrl']);
+  const serverUrl = settings.serverUrl || 'http://localhost:5277';
+
+  try {
+    // 尝试从服务器获取文件路径
+    const resp = await fetch(`${serverUrl}/api/check-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename }),
+      signal: AbortSignal.timeout(3000)
+    });
+    const result = await resp.json();
+    if (result.exists && result.path) {
+      console.log('[CDP] 服务器返回文件路径:', result.path);
+      return result.path;
+    }
+  } catch (e) {
+    console.log('[CDP] 服务器不可用');
+  }
+
+  return null;
+}
+
+/**
+ * 通过 chrome.debugger (CDP) 上传文件到当前 Tab
+ * 使用 DOM.setFileInputFiles 直接注入文件路径，无需 pyautogui
+ *
+ * @param {number} tabId - 目标 Tab ID
+ * @param {string} filePath - 文件的本地绝对路径
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+async function cdpUploadFile(tabId, filePath) {
+  const target = { tabId };
+  const cdpVersion = '1.3';
+
+  // 检查 chrome.debugger API 是否可用
+  if (!chrome.debugger || typeof chrome.debugger.attach !== 'function') {
+    console.error('[CDP] chrome.debugger API 不可用，请确认：');
+    console.error('[CDP] 1. manifest.json 中已声明 "debugger" 权限');
+    console.error('[CDP] 2. 扩展已完全重新加载（edge://extensions 点击重新加载）');
+    return { success: false, error: 'chrome.debugger API 不可用，请重新加载扩展后重试' };
+  }
+
+  try {
+    console.log('[CDP] 开始上传文件:', filePath);
+
+    // 1. 附加调试器
+    try {
+      await chrome.debugger.attach(target, cdpVersion);
+    } catch (e) {
+      // 如果已经附加，忽略错误
+      if (!e.message?.includes('already attached')) {
+        throw e;
+      }
+    }
+
+    try {
+      // 2. 启用 DOM 域
+      await chrome.debugger.sendCommand(target, 'DOM.enable');
+
+      // 3. 获取文档根节点
+      const { root } = await chrome.debugger.sendCommand(target, 'DOM.getDocument');
+      console.log('[CDP] 获取文档根节点成功');
+
+      // 4. 查找 input[type="file"] 元素
+      let { nodeId } = await chrome.debugger.sendCommand(target, 'DOM.querySelector', {
+        nodeId: root.nodeId,
+        selector: 'input[type="file"]'
+      });
+
+      // 如果没找到，等待一下再试（Google 页面动态加载）
+      if (!nodeId) {
+        console.log('[CDP] 未找到 file input，等待 1 秒后重试...');
+        await wait(1000);
+
+        const { root: newRoot } = await chrome.debugger.sendCommand(target, 'DOM.getDocument');
+        const retry = await chrome.debugger.sendCommand(target, 'DOM.querySelector', {
+          nodeId: newRoot.nodeId,
+          selector: 'input[type="file"]'
+        });
+        nodeId = retry.nodeId;
+      }
+
+      if (!nodeId) {
+        // 尝试搜索所有 input 元素
+        console.log('[CDP] 仍未找到 file input，尝试搜索所有 input...');
+        const { root: docRoot } = await chrome.debugger.sendCommand(target, 'DOM.getDocument');
+        const { nodeIds } = await chrome.debugger.sendCommand(target, 'DOM.querySelectorAll', {
+          nodeId: docRoot.nodeId,
+          selector: 'input'
+        });
+
+        console.log('[CDP] 找到', nodeIds?.length || 0, '个 input 元素');
+
+        // 尝试逐个检查是否是 file 类型
+        for (const nId of (nodeIds || [])) {
+          try {
+            const { attributes } = await chrome.debugger.sendCommand(target, 'DOM.getAttributes', {
+              nodeId: nId
+            });
+            const attrs = attributes || [];
+            for (let i = 0; i < attrs.length; i += 2) {
+              if (attrs[i] === 'type' && attrs[i + 1] === 'file') {
+                nodeId = nId;
+                console.log('[CDP] 通过遍历找到 file input, nodeId:', nodeId);
+                break;
+              }
+            }
+            if (nodeId) break;
+          } catch (e) {
+            // 忽略单个元素的错误
+          }
+        }
+      }
+
+      if (!nodeId) {
+        return { success: false, error: '未找到文件输入框 (input[type="file"])，请确认已点击"上传文件"' };
+      }
+
+      console.log('[CDP] 找到 file input, nodeId:', nodeId);
+
+      // 5. 核心：注入文件路径
+      await chrome.debugger.sendCommand(target, 'DOM.setFileInputFiles', {
+        nodeId: nodeId,
+        files: [filePath]
+      });
+
+      console.log('[CDP] 文件路径注入成功！');
+      return { success: true };
+
+    } finally {
+      // 6. 断开调试器
+      try {
+        await chrome.debugger.detach(target);
+      } catch (e) {
+        // 忽略断开错误
+      }
+    }
+
+  } catch (error) {
+    console.error('[CDP] 上传失败:', error);
+    // 确保断开调试器
+    try {
+      await chrome.debugger.detach(target);
+    } catch (e) {}
+    return { success: false, error: error.message || 'CDP 上传失败' };
+  }
+}
+
+/**
+/**
+ * CDP 模式的完整搜图流程
+ * 替代 pyautogui 模式的 uploadToTab 函数
+ *
+ * @param {object} prepareResult - { filename, isLocal, tabId, serverPath }
+ */
+async function uploadToTabCDP(prepareResult) {
+  const { filename, isLocal, tabId, serverPath } = prepareResult;
+  const logs = [];
+  const MAX_RETRIES = 2;
+
+  try {
+    // CDP 不需要激活 tab，后台即可操作
+    logs.push('[CDP] 开始处理: ' + filename + ' (tabId: ' + tabId + ')');
+
+    // 获取文件路径
+    logs.push('[CDP] 获取文件路径...');
+    const filePath = await getFilePathForCDP(filename, serverPath);
+
+    if (!filePath) {
+      logs.push('[CDP] 无法获取文件路径');
+      return { success: false, filename, tabId, error: '无法获取文件路径', logs };
+    }
+
+    logs.push('[CDP] 文件路径: ' + filePath);
+
+    // 确保已点击"按图搜图"和"上传文件"标签（file input 需要先出现在 DOM 中）
+    logs.push('[CDP] 检查 file input 是否已加载...');
+    let result = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const fileInput = document.querySelector('input[type="file"]');
+        return { found: !!fileInput };
+      },
+      world: 'MAIN'
+    });
+
+    if (!result?.[0]?.result?.found) {
+      // 先点击"按图搜图"按钮
+      logs.push('[CDP] file input 未找到，尝试点击"按图搜图"...');
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: clickSearchByImage,
+        world: 'MAIN'
+      });
+
+      // 轮询等待 file input 出现（最多 1.5s，每 100ms 检查一次）
+      const deadline = Date.now() + 1500;
+      let found = false;
+      while (Date.now() < deadline) {
+        const check = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            // 检查"上传文件"标签是否可见
+            const spans = document.querySelectorAll('span[role="button"][jsaction][jsname]');
+            for (const span of spans) {
+              const text = span.textContent?.trim() || '';
+              if (text === '上传文件' || text === 'Upload a file' || text === '上傳檔案') {
+                const rect = span.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) return { uploadTabVisible: true };
+              }
+            }
+            return { uploadTabVisible: false };
+          },
+          world: 'MAIN'
+        });
+
+        if (check?.[0]?.result?.uploadTabVisible) {
+          logs.push('[CDP] "上传文件"标签已显示，立即点击');
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: clickUploadFile,
+            world: 'MAIN'
+          });
+          found = true;
+          break;
+        }
+        await wait(100);
+      }
+
+      if (!found) {
+        // 超时了也尝试点击一次
+        logs.push('[CDP] 等待超时，仍尝试点击"上传文件"');
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: clickUploadFile,
+          world: 'MAIN'
+        });
+      }
+
+      // 轮询等待 file input 出现（最多 1.5s）
+      const fiDeadline = Date.now() + 1500;
+      let fiFound = false;
+      while (Date.now() < fiDeadline) {
+        const check = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => !!document.querySelector('input[type="file"]'),
+          world: 'MAIN'
+        });
+        if (check?.[0]?.result) {
+          logs.push('[CDP] file input 已出现');
+          fiFound = true;
+          break;
+        }
+        await wait(100);
+      }
+
+      if (!fiFound) {
+        logs.push('[CDP] file input 未出现');
+        return { success: false, filename, tabId, error: '无法打开文件上传界面', logs };
+      }
+    }
+
+    // 使用 CDP 上传
+    let uploadSuccess = false;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      logs.push(`[CDP] 第 ${attempt}/${MAX_RETRIES} 次尝试上传`);
+      const cdpResult = await cdpUploadFile(tabId, filePath);
+      logs.push('[CDP] 上传结果: ' + JSON.stringify(cdpResult));
+
+      if (cdpResult.success) {
+        uploadSuccess = true;
+        break;
+      }
+
+      if (attempt < MAX_RETRIES) {
+        logs.push('[CDP] 重试中...');
+        await wait(500);
+      }
+    }
+
+    if (uploadSuccess) {
+      // 上传成功，等待处理后点击搜索
+      await wait(500);
+
+      logs.push('[CDP] 点击搜索按钮...');
+      result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: clickSearchBtn,
+        world: 'MAIN'
+      });
+
+      if (!result?.[0]?.result?.success) {
+        logs.push('[CDP] 搜索按钮未找到，可能已自动提交');
+      }
+
+      // 异步更新 URL 记录
+      setTimeout(async () => {
+        try {
+          const finalTab = await chrome.tabs.get(tabId);
+          if (finalTab && finalTab.url) {
+            searchedImages.set(filename + '_google', {
+              tabId,
+              url: finalTab.url,
+              timestamp: Date.now()
+            });
+            await saveSearchedImages();
+          }
+        } catch (e) {
+          console.log('[CDP] 异步更新URL失败:', e);
+        }
+      }, 3000);
+
+      logs.push('[CDP] 搜图完成!');
+      return { success: true, filename, tabId, logs };
+    }
+
+    return { success: false, filename, tabId, error: 'CDP 上传失败', logs };
+
+  } catch (error) {
+    logs.push('[CDP] 失败: ' + error.message);
+    console.error('[CDP] 上传失败:', filename, logs.join('\n'));
+    return { success: false, filename, tabId, error: error.message, logs };
+  }
 }
 
 // 检查tab是否还存在且URL是搜图结果页面
@@ -946,95 +1412,71 @@ function findAmazonUploadButton() {
 
 // ==================== 准备单个Tab ====================
 
-async function prepareSearchTab(imageInfo) {
-  const { filename, isLocal } = imageInfo;
-  
+// 轻量创建：只打开页面，不点击按钮（按钮点击交给上传阶段处理）
+async function createSearchTab(imageInfo) {
+  const { filename, isLocal, serverPath } = imageInfo;
+
   try {
-    // 打开Google搜图页面
     const tab = await chrome.tabs.create({
       url: 'https://www.google.com/imghp',
-      active: true  // 激活新tab
+      active: false
     });
-    
+
     await waitForTabComplete(tab.id);
-    await wait(2000);
-    
-    // 记录图片对应的tab信息
-    searchedImages.set(filename, {
+
+    searchedImages.set(filename + '_google', {
       tabId: tab.id,
       url: tab.url,
       timestamp: Date.now()
     });
     await saveSearchedImages();
-    
-    // 点击"按图搜索"
-    let result = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: clickSearchByImage,
-      world: 'MAIN'
-    });
-    
-    if (!result[0]?.result?.success) {
-      console.error('[搜图] 点击按图搜索失败:', filename);
-      return { success: false, filename, error: '点击按图搜索失败' };
-    }
-    
-    await wait(1500);
-    
-    // 点击"上传文件"
-    result = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: clickUploadFile,
-      world: 'MAIN'
-    });
-    
-    console.log('[搜图] Tab准备完成:', filename, 'tabId:', tab.id);
-    
-    return { 
-      success: true, 
-      filename, 
+
+    console.log('[搜图] Tab创建完成:', filename, 'tabId:', tab.id);
+
+    return {
+      success: true,
+      filename,
       isLocal,
       tabId: tab.id,
-      uploadSuccess: result[0]?.result?.success || false
+      serverPath
     };
-    
+
   } catch (error) {
-    console.error('[搜图] 准备Tab失败:', filename, error);
+    console.error('[搜图] 创建Tab失败:', filename, error);
     return { success: false, filename, error: error.message };
   }
 }
 
 // 通过复制已有Tab来创建新Tab（更快，继承页面状态）
 async function duplicateSearchTab(sourceTabId, imageInfo) {
-  const { filename, isLocal } = imageInfo;
-  
+  const { filename, isLocal, serverPath } = imageInfo;
+
   try {
     // 复制tab
     const newTab = await chrome.tabs.duplicate(sourceTabId);
-    
-    // 设置复制的tab为不激活
+
+    // 强制不激活（duplicate 默认会激活新 tab）
     await chrome.tabs.update(newTab.id, { active: false });
-    
+
     await waitForTabComplete(newTab.id);
-    await wait(1000);
-    
-    // 记录图片对应的tab信息
-    searchedImages.set(filename, {
+
+    searchedImages.set(filename + '_google', {
       tabId: newTab.id,
       url: newTab.url,
       timestamp: Date.now()
     });
     await saveSearchedImages();
-    
+
     console.log('[搜图] Tab复制完成:', filename, 'tabId:', newTab.id);
-    
+
     return {
       success: true,
       filename,
       isLocal,
-      tabId: newTab.id
+      tabId: newTab.id,
+      serverPath
     };
-    
+
   } catch (error) {
     console.error('[搜图] 复制Tab失败:', filename, error);
     return { success: false, filename, error: error.message };
@@ -1045,102 +1487,231 @@ async function duplicateSearchTab(sourceTabId, imageInfo) {
 async function createTabGroup(tabIds, title) {
   try {
     if (tabIds.length === 0) return -1;
-    
+
     // 将所有tab加入分组
     const groupId = await chrome.tabs.group({ tabIds });
-    
+
     // 设置分组标题和颜色
     await chrome.tabGroups.update(groupId, {
-      title: title || 'Google搜图',
+      title: title || '搜图',
       color: 'blue',
       collapsed: false
     });
-    
+
+    // 按传入顺序排列 tab（chrome.tabs.group 不保证顺序）
+    for (let i = 0; i < tabIds.length; i++) {
+      try {
+        await chrome.tabs.move(tabIds[i], { index: -1 });
+      } catch (e) {
+        // 忽略单个 tab 移动失败
+      }
+    }
+
     console.log('[搜图] 创建Tab分组:', title, 'groupId:', groupId, 'tabs:', tabIds.length);
     return groupId;
-    
+
   } catch (error) {
     console.error('[搜图] 创建分组失败:', error);
     return -1;
   }
 }
 
-// ==================== Amazon搜图Tab准备 ====================
+// ==================== Amazon搜图Tab创建 ====================
 
-async function prepareAmazonSearchTab(imageInfo) {
-  const { filename, isLocal } = imageInfo;
-  
+// 轻量创建：只打开页面，不点击按钮
+async function createAmazonSearchTab(imageInfo) {
+  const { filename, isLocal, serverPath } = imageInfo;
+
   try {
-    // 打开Amazon StyleSnap页面
     const tab = await chrome.tabs.create({
       url: 'https://www.amazon.com/stylesnap',
-      active: true  // 激活新tab
+      active: false
     });
-    
+
     await waitForTabComplete(tab.id);
-    await wait(3000); // Amazon页面加载较慢，多等一会
-    
-    // 记录图片对应的tab信息
-    searchedImages.set(filename, {
+
+    searchedImages.set(filename + '_amazon', {
       tabId: tab.id,
       url: tab.url,
       timestamp: Date.now()
     });
     await saveSearchedImages();
-    
-    console.log('[Amazon搜图] Tab准备完成:', filename, 'tabId:', tab.id);
-    
-    return { 
-      success: true, 
-      filename, 
-      isLocal,
-      tabId: tab.id
-    };
-    
-  } catch (error) {
-    console.error('[Amazon搜图] 准备Tab失败:', filename, error);
-    return { success: false, filename, error: error.message };
-  }
-}
 
-// 通过复制已有Tab来创建新Tab（更快）
-async function duplicateAmazonSearchTab(sourceTabId, imageInfo) {
-  const { filename, isLocal } = imageInfo;
-  
-  try {
-    // 复制tab
-    const newTab = await chrome.tabs.duplicate(sourceTabId);
-    
-    // 设置复制的tab为不激活
-    await chrome.tabs.update(newTab.id, { active: false });
-    
-    await waitForTabComplete(newTab.id);
-    await wait(1500);
-    
-    // 记录图片对应的tab信息
-    searchedImages.set(filename, {
-      tabId: newTab.id,
-      url: newTab.url,
-      timestamp: Date.now()
-    });
-    await saveSearchedImages();
-    
-    console.log('[Amazon搜图] Tab复制完成:', filename, 'tabId:', newTab.id);
-    
+    console.log('[Amazon搜图] Tab创建完成:', filename, 'tabId:', tab.id);
+
     return {
       success: true,
       filename,
       isLocal,
-      tabId: newTab.id
+      tabId: tab.id,
+      serverPath
     };
-    
+
   } catch (error) {
-    console.error('[Amazon搜图] 复制Tab失败:', filename, error);
+    console.error('[Amazon搜图] 创建Tab失败:', filename, error);
     return { success: false, filename, error: error.message };
   }
 }
 
-// ==================== Amazon上传到Tab ====================
+// ==================== Amazon CDP 上传 ====================
+
+/**
+ * CDP 模式 Amazon 上传
+ */
+async function uploadToAmazonTabCDP(prepareResult) {
+  const { filename, isLocal, tabId, serverPath } = prepareResult;
+  const logs = [];
+  const MAX_RETRIES = 2;
+
+  // 检查 chrome.debugger API
+  if (!chrome.debugger || typeof chrome.debugger.attach !== 'function') {
+    return { success: false, filename, tabId, error: 'chrome.debugger API 不可用', logs };
+  }
+
+  try {
+    logs.push('[Amazon CDP] 开始处理: ' + filename);
+
+    // 获取文件路径
+    logs.push('[Amazon CDP] 获取文件路径...');
+    const filePath = await getFilePathForCDP(filename, serverPath);
+
+    if (!filePath) {
+      return { success: false, filename, tabId, error: '无法获取文件路径', logs };
+    }
+
+    logs.push('[Amazon CDP] 文件路径: ' + filePath);
+
+    // 轮询等待 file input 出现（Amazon 页面可能需要加载时间）
+    const deadline = Date.now() + 3000;
+    let fileInputFound = false;
+
+    while (Date.now() < deadline) {
+      const check = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          // 检查 file input
+          const fileInput = document.querySelector('input[type="file"]');
+          if (fileInput) return { found: true };
+
+          // 检查上传按钮
+          const uploadBtn = document.querySelector('span#a-autoid-0-announce');
+          if (uploadBtn) {
+            const rect = uploadBtn.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) return { found: false, hasButton: true };
+          }
+
+          return { found: false, hasButton: false };
+        },
+        world: 'MAIN'
+      });
+
+      const result = check?.[0]?.result;
+
+      if (result?.found) {
+        fileInputFound = true;
+        logs.push('[Amazon CDP] file input 已出现');
+        break;
+      }
+
+      if (result?.hasButton) {
+        // 点击上传按钮触发 file input
+        logs.push('[Amazon CDP] 点击上传按钮...');
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const btn = document.querySelector('span#a-autoid-0-announce');
+            if (btn) btn.click();
+          },
+          world: 'MAIN'
+        });
+      }
+
+      await wait(200);
+    }
+
+    if (!fileInputFound) {
+      // 最后再检查一次
+      const finalCheck = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => !!document.querySelector('input[type="file"]'),
+        world: 'MAIN'
+      });
+
+      if (!finalCheck?.[0]?.result) {
+        logs.push('[Amazon CDP] file input 未出现');
+        return { success: false, filename, tabId, error: '无法找到文件上传入口', logs };
+      }
+    }
+
+    // 使用 CDP 上传
+    let uploadSuccess = false;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      logs.push(`[Amazon CDP] 第 ${attempt}/${MAX_RETRIES} 次尝试上传`);
+
+      // CDP 上传
+      const target = { tabId };
+      try {
+        await chrome.debugger.attach(target, '1.3');
+      } catch (e) {
+        if (!e.message?.includes('already attached')) throw e;
+      }
+
+      try {
+        await chrome.debugger.sendCommand(target, 'DOM.enable');
+        const { root } = await chrome.debugger.sendCommand(target, 'DOM.getDocument');
+
+        const { nodeId } = await chrome.debugger.sendCommand(target, 'DOM.querySelector', {
+          nodeId: root.nodeId,
+          selector: 'input[type="file"]'
+        });
+
+        if (nodeId) {
+          await chrome.debugger.sendCommand(target, 'DOM.setFileInputFiles', {
+            nodeId,
+            files: [filePath]
+          });
+          uploadSuccess = true;
+          logs.push('[Amazon CDP] 文件注入成功');
+        } else {
+          logs.push('[Amazon CDP] 未找到 file input nodeId');
+        }
+      } finally {
+        try { await chrome.debugger.detach(target); } catch (e) {}
+      }
+
+      if (uploadSuccess) break;
+      if (attempt < MAX_RETRIES) await wait(300);
+    }
+
+    if (uploadSuccess) {
+      // Amazon 会自动处理搜索，等待结果加载
+      await wait(2000);
+
+      // 异步更新 URL
+      setTimeout(async () => {
+        try {
+          const finalTab = await chrome.tabs.get(tabId);
+          if (finalTab?.url) {
+            searchedImages.set(filename + '_amazon', { tabId, url: finalTab.url, timestamp: Date.now() });
+            await saveSearchedImages();
+          }
+        } catch (e) {}
+      }, 5000);
+
+      logs.push('[Amazon CDP] 搜图完成');
+      return { success: true, filename, tabId, logs };
+    }
+
+    return { success: false, filename, tabId, error: 'CDP 上传失败', logs };
+
+  } catch (error) {
+    logs.push('[Amazon CDP] 失败: ' + error.message);
+    try { await chrome.debugger.detach({ tabId }); } catch (e) {}
+    return { success: false, filename, tabId, error: error.message, logs };
+  }
+}
+
+// ==================== Amazon pyautogui 上传 ====================
 
 async function uploadToAmazonTab(prepareResult) {
   const { filename, isLocal, tabId } = prepareResult;
@@ -1148,48 +1719,38 @@ async function uploadToAmazonTab(prepareResult) {
   const serverUrl = settings.serverUrl || 'http://localhost:5277';
   const logs = [];
   const MAX_RETRIES = 3;
-  
+
   try {
-    // 激活tab
+    // 激活tab（pyautogui 需要）
     await chrome.tabs.update(tabId, { active: true });
     await wait(500);
-    
+
     let buttonResult = null;
-    
-    // 重试循环
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       logs.push(`[上传] 第 ${attempt}/${MAX_RETRIES} 次尝试`);
-      
-      // 获取上传按钮坐标
-      logs.push('获取上传按钮坐标');
-      
+
       let result = await chrome.scripting.executeScript({
         target: { tabId },
         func: findAmazonUploadButton,
         world: 'MAIN'
       });
-      
+
       buttonResult = result?.[0]?.result;
-      
+
       if (!buttonResult || !buttonResult.success) {
         logs.push('上传按钮未找到');
-        if (attempt < MAX_RETRIES) {
-          await wait(1000);
-          continue;
-        }
+        if (attempt < MAX_RETRIES) { await wait(1000); continue; }
         throw new Error('获取上传按钮坐标失败');
       }
-      
+
       logs.push('按钮坐标: (' + buttonResult.viewport.x + ', ' + buttonResult.viewport.y + ')');
-      
       await wait(300);
-      
-      // 通知服务器点击坐标并选择文件
-      logs.push('服务器点击坐标');
+
       const uploadResponse = await fetch(`${serverUrl}/api/select-file-and-upload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           filename,
           isLocal: isLocal || false,
           buttonX: buttonResult.viewport.x,
@@ -1200,58 +1761,39 @@ async function uploadToAmazonTab(prepareResult) {
         }),
         signal: AbortSignal.timeout(30000)
       });
-      
+
       const uploadResult = await uploadResponse.json();
       logs.push('服务器响应: ' + JSON.stringify(uploadResult));
-      
+
       if (uploadResult.success) {
-        // 上传成功，Amazon会自动处理图片搜索
         await wait(3000);
-        
-        // 异步更新URL记录
+
         setTimeout(async () => {
           try {
             const finalTab = await chrome.tabs.get(tabId);
-            if (finalTab && finalTab.url) {
-              searchedImages.set(filename, {
-                tabId,
-                url: finalTab.url,
-                timestamp: Date.now()
-              });
+            if (finalTab?.url) {
+              searchedImages.set(filename + '_amazon', { tabId, url: finalTab.url, timestamp: Date.now() });
               await saveSearchedImages();
             }
-          } catch (e) {
-            console.log('[Amazon搜图] 异步更新URL失败:', e);
-          }
+          } catch (e) {}
         }, 5000);
-        
+
         logs.push('Amazon搜图完成!');
         return { success: true, filename, tabId, logs };
       }
-      
-      // 上传失败，检查是否是文件不存在（不需要重试）
-      if (uploadResult.error && uploadResult.error.includes('文件不存在')) {
-        logs.push(`文件不存在，跳过: ${filename}`);
-        console.error(`[Amazon搜图] 文件不存在: ${filename}，请先下载图片`);
-        try {
-          chrome.runtime.sendMessage({
-            type: 'searchError',
-            error: `文件不存在: ${filename}，请先下载图片`
-          }).catch(() => {});
-        } catch (e) {}
+
+      if (uploadResult.error?.includes('文件不存在')) {
         return { success: false, filename, error: uploadResult.error, logs };
       }
-      
-      // 其他失败，重试
+
       logs.push(`上传失败: ${uploadResult.error}，准备重试...`);
       await wait(500);
     }
-    
+
     throw new Error(`${MAX_RETRIES} 次尝试后仍失败`);
-    
+
   } catch (error) {
     logs.push('失败: ' + error.message);
-    console.error('[Amazon搜图] 上传失败:', filename, logs.join('\n'));
     return { success: false, filename, error: error.message, logs };
   }
 }
@@ -1259,29 +1801,26 @@ async function uploadToAmazonTab(prepareResult) {
 // ==================== Amazon批量搜图主流程 ====================
 
 async function executeBatchAmazonSearch(images) {
-  // 先清理无效的记录
   await cleanupSearchedImages();
-  
-  // 过滤掉已经在搜图中的图片
+
   const imagesToSearch = [];
   const skippedImages = [];
-  
+
   for (const img of images) {
-    const record = searchedImages.get(img.filename);
+    const record = searchedImages.get(img.filename + '_amazon');
     if (record) {
       const valid = await isTabValidForSkip(record.tabId, record.url);
       if (valid) {
         skippedImages.push(img.filename);
-        console.log('[Amazon搜图] 跳过已搜图的图片:', img.filename);
         continue;
       } else {
-        searchedImages.delete(img.filename);
+        searchedImages.delete(img.filename + '_amazon');
         await saveSearchedImages();
       }
     }
     imagesToSearch.push(img);
   }
-  
+
   if (skippedImages.length > 0) {
     chrome.runtime.sendMessage({
       type: 'searchSkipped',
@@ -1289,25 +1828,28 @@ async function executeBatchAmazonSearch(images) {
       filenames: skippedImages
     }).catch(() => {});
   }
-  
+
   if (imagesToSearch.length === 0) {
     console.log('[Amazon搜图] 所有图片都已搜图');
     return [];
   }
-  
+
   console.log('[Amazon搜图] 需要搜图的图片:', imagesToSearch.length, '张');
-  
-  // ========== 阶段1: 准备Tab ==========
+
+  // 保存用户当前 tab
+  const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const currentTabId = currentTab?.id;
+
+  // ========== 阶段1: 并行创建所有Tab ==========
   chrome.runtime.sendMessage({
     type: 'searchPhase',
     phase: 'prepare',
     total: imagesToSearch.length
   }).catch(() => {});
-  
+
   const prepareResults = [];
-  let firstTabId = null;
-  
-  // 第一个tab：正常创建并准备
+
+  // 第一个tab：只打开页面
   chrome.runtime.sendMessage({
     type: 'searchProgress',
     phase: 'prepare',
@@ -1315,53 +1857,77 @@ async function executeBatchAmazonSearch(images) {
     total: imagesToSearch.length,
     filename: imagesToSearch[0].filename
   }).catch(() => {});
-  
+
   console.log('[Amazon搜图] 创建第一个Tab...');
-  const firstResult = await prepareAmazonSearchTab(imagesToSearch[0]);
+  const firstResult = await createAmazonSearchTab(imagesToSearch[0]);
   prepareResults.push(firstResult);
-  
+
+  let firstTabId = null;
   if (firstResult.success) {
     firstTabId = firstResult.tabId;
-    console.log('[Amazon搜图] 第一个Tab准备完成，tabId:', firstTabId);
   } else {
-    console.error('[Amazon搜图] 第一个Tab准备失败，无法复制后续Tab');
-    // 如果第一个失败，后续全部标记失败
     for (let i = 1; i < imagesToSearch.length; i++) {
-      prepareResults.push({ 
-        success: false, 
-        filename: imagesToSearch[i].filename, 
-        error: '首个Tab准备失败' 
+      prepareResults.push({
+        success: false,
+        filename: imagesToSearch[i].filename,
+        error: '首个Tab创建失败'
       });
     }
   }
-  
-  // 后续tab：通过复制第一个tab创建
-  if (firstTabId) {
+
+  // 后续tab：并行复制
+  if (firstTabId && imagesToSearch.length > 1) {
+    console.log('[Amazon搜图] 并行复制剩余', imagesToSearch.length - 1, '个Tab...');
+
+    const duplicatePromises = [];
     for (let i = 1; i < imagesToSearch.length; i++) {
-      chrome.runtime.sendMessage({
-        type: 'searchProgress',
-        phase: 'prepare',
-        current: i + 1,
-        total: imagesToSearch.length,
-        filename: imagesToSearch[i].filename
-      }).catch(() => {});
-      
-      console.log('[Amazon搜图] 复制Tab:', imagesToSearch[i].filename);
-      const result = await duplicateAmazonSearchTab(firstTabId, imagesToSearch[i]);
-      prepareResults.push(result);
-      
-      // 短暂间隔
-      if (i < imagesToSearch.length - 1) {
-        await wait(300);
-      }
+      const promise = (async () => {
+        chrome.runtime.sendMessage({
+          type: 'searchProgress',
+          phase: 'prepare',
+          current: i + 1,
+          total: imagesToSearch.length,
+          filename: imagesToSearch[i].filename
+        }).catch(() => {});
+
+        const newTab = await chrome.tabs.duplicate(firstTabId);
+        await chrome.tabs.update(newTab.id, { active: false });
+        await waitForTabComplete(newTab.id);
+
+        searchedImages.set(imagesToSearch[i].filename + '_amazon', {
+          tabId: newTab.id,
+          url: newTab.url,
+          timestamp: Date.now()
+        });
+        await saveSearchedImages();
+
+        return {
+          success: true,
+          filename: imagesToSearch[i].filename,
+          isLocal: imagesToSearch[i].isLocal,
+          tabId: newTab.id,
+          serverPath: imagesToSearch[i].serverPath
+        };
+      })();
+      duplicatePromises.push(promise);
     }
+
+    const duplicateResults = await Promise.all(duplicatePromises);
+    prepareResults.push(...duplicateResults);
   }
-  
+
+  // 立即恢复用户原 tab
+  if (currentTabId) {
+    try {
+      await chrome.tabs.update(currentTabId, { active: true });
+    } catch (e) {}
+  }
+
   const preparedTabs = prepareResults.filter(r => r.success);
   const prepareFailed = prepareResults.filter(r => !r.success);
-  
+
   console.log('[Amazon搜图] Tab准备完成:', preparedTabs.length, '个成功,', prepareFailed.length, '个失败');
-  
+
   // 创建Tab分组
   if (preparedTabs.length > 0) {
     const tabIds = preparedTabs.map(t => t.tabId);
@@ -1369,19 +1935,23 @@ async function executeBatchAmazonSearch(images) {
     const groupTitle = `Amazon搜图 ${timestamp} (${preparedTabs.length})`;
     await createTabGroup(tabIds, groupTitle);
   }
-  
+
   // ========== 阶段2: 逐个上传 ==========
   chrome.runtime.sendMessage({
     type: 'searchPhase',
     phase: 'upload',
     total: preparedTabs.length
   }).catch(() => {});
-  
+
   const results = [...prepareFailed];
-  
+
+  // 获取上传模式
+  const uploadMode = await getUploadMode();
+  console.log('[Amazon搜图] 当前上传模式:', uploadMode);
+
   for (let i = 0; i < preparedTabs.length; i++) {
     const tab = preparedTabs[i];
-    
+
     chrome.runtime.sendMessage({
       type: 'searchProgress',
       phase: 'upload',
@@ -1389,20 +1959,28 @@ async function executeBatchAmazonSearch(images) {
       total: preparedTabs.length,
       filename: tab.filename
     }).catch(() => {});
-    
-    console.log('[Amazon搜图] 开始上传:', tab.filename, '(' + (i+1) + '/' + preparedTabs.length + ')');
-    
-    const result = await uploadToAmazonTab(tab);
+
+    console.log('[Amazon搜图] 开始上传:', tab.filename, '(' + (i+1) + '/' + preparedTabs.length + ')', '模式:', uploadMode);
+
+    const t_start = Date.now();
+    let result;
+
+    if (uploadMode === 'cdp') {
+      result = await uploadToAmazonTabCDP(tab);
+    } else {
+      result = await uploadToAmazonTab(tab);
+    }
+
+    const t_elapsed = ((Date.now() - t_start) / 1000).toFixed(2);
     results.push(result);
-    
-    console.log('[Amazon搜图] 上传完成:', tab.filename, result.success ? '成功' : '失败');
-    
-    // 间隔一下再处理下一个
+
+    console.log('[Amazon搜图] 上传完成:', tab.filename, result.success ? '成功' : '失败', `耗时: ${t_elapsed}s`);
+
     if (i < preparedTabs.length - 1) {
-      await wait(1000);
+      await wait(200);
     }
   }
-  
+
   return results;
 }
 
@@ -1534,7 +2112,7 @@ async function uploadToTab(prepareResult) {
           try {
             const finalTab = await chrome.tabs.get(tabId);
             if (finalTab && finalTab.url) {
-              searchedImages.set(filename, {
+              searchedImages.set(filename + '_google', {
                 tabId,
                 url: finalTab.url,
                 timestamp: Date.now()
@@ -1545,7 +2123,7 @@ async function uploadToTab(prepareResult) {
             console.log('[搜图] 异步更新URL失败:', e);
           }
         }, 3000);
-        
+
         logs.push('搜图完成!');
         return { success: true, filename, tabId, logs };
       }
@@ -1588,7 +2166,7 @@ async function executeBatchGoogleSearch(images) {
   const skippedImages = [];
   
   for (const img of images) {
-    const record = searchedImages.get(img.filename);
+    const record = searchedImages.get(img.filename + '_google');
     if (record) {
       const valid = await isTabValidForSkip(record.tabId, record.url);
       if (valid) {
@@ -1596,7 +2174,7 @@ async function executeBatchGoogleSearch(images) {
         console.log('[搜图] 跳过已搜图的图片:', img.filename);
         continue;
       } else {
-        searchedImages.delete(img.filename);
+        searchedImages.delete(img.filename + '_google');
         await saveSearchedImages();
       }
     }
@@ -1617,7 +2195,11 @@ async function executeBatchGoogleSearch(images) {
   }
   
   console.log('[搜图] 需要搜图的图片:', imagesToSearch.length, '张');
-  
+
+  // 保存用户当前 tab，搜图结束后恢复
+  const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const currentTabId = currentTab?.id;
+
   // ========== 阶段1: 并行创建所有Tab ==========
   chrome.runtime.sendMessage({
     type: 'searchPhase',
@@ -1626,8 +2208,8 @@ async function executeBatchGoogleSearch(images) {
   }).catch(() => {});
   
   const prepareResults = [];
-  
-  // 第一个tab：正常创建并准备
+
+  // 第一个tab：只打开页面，不点击按钮
   chrome.runtime.sendMessage({
     type: 'searchProgress',
     phase: 'prepare',
@@ -1635,30 +2217,30 @@ async function executeBatchGoogleSearch(images) {
     total: imagesToSearch.length,
     filename: imagesToSearch[0].filename
   }).catch(() => {});
-  
+
   console.log('[搜图] 创建第一个Tab...');
-  const firstResult = await prepareSearchTab(imagesToSearch[0]);
+  const firstResult = await createSearchTab(imagesToSearch[0]);
   prepareResults.push(firstResult);
-  
+
   let firstTabId = null;
   if (firstResult.success) {
     firstTabId = firstResult.tabId;
-    console.log('[搜图] 第一个Tab准备完成，tabId:', firstTabId);
+    console.log('[搜图] 第一个Tab创建完成，tabId:', firstTabId);
   } else {
-    console.error('[搜图] 第一个Tab准备失败，无法复制后续Tab');
+    console.error('[搜图] 第一个Tab创建失败，无法复制后续Tab');
     for (let i = 1; i < imagesToSearch.length; i++) {
-      prepareResults.push({ 
-        success: false, 
-        filename: imagesToSearch[i].filename, 
-        error: '首个Tab准备失败' 
+      prepareResults.push({
+        success: false,
+        filename: imagesToSearch[i].filename,
+        error: '首个Tab创建失败'
       });
     }
   }
-  
-  // 后续tab：并行复制（使用 Promise.all 同时创建）
+
+  // 后续tab：立即并行复制（不需要等按钮点击）
   if (firstTabId && imagesToSearch.length > 1) {
     console.log('[搜图] 并行复制剩余', imagesToSearch.length - 1, '个Tab...');
-    
+
     const duplicatePromises = [];
     for (let i = 1; i < imagesToSearch.length; i++) {
       const promise = (async () => {
@@ -1669,16 +2251,26 @@ async function executeBatchGoogleSearch(images) {
           total: imagesToSearch.length,
           filename: imagesToSearch[i].filename
         }).catch(() => {});
-        
+
         const result = await duplicateSearchTab(firstTabId, imagesToSearch[i]);
         return result;
       })();
       duplicatePromises.push(promise);
     }
-    
+
     // 等待所有Tab创建完成
     const duplicateResults = await Promise.all(duplicatePromises);
     prepareResults.push(...duplicateResults);
+  }
+
+  // Tab 创建完成，立即恢复用户原来的 tab
+  if (currentTabId) {
+    try {
+      await chrome.tabs.update(currentTabId, { active: true });
+      console.log('[搜图] 已恢复用户原 tab:', currentTabId);
+    } catch (e) {
+      // 原 tab 可能已关闭，忽略
+    }
   }
   
   const preparedTabs = prepareResults.filter(r => r.success);
@@ -1700,12 +2292,16 @@ async function executeBatchGoogleSearch(images) {
     phase: 'upload',
     total: preparedTabs.length
   }).catch(() => {});
-  
+
   const results = [...prepareFailed];
-  
+
+  // 获取当前上传模式
+  const uploadMode = await getUploadMode();
+  console.log('[搜图] 当前上传模式:', uploadMode);
+
   for (let i = 0; i < preparedTabs.length; i++) {
     const tab = preparedTabs[i];
-    
+
     chrome.runtime.sendMessage({
       type: 'searchProgress',
       phase: 'upload',
@@ -1713,22 +2309,30 @@ async function executeBatchGoogleSearch(images) {
       total: preparedTabs.length,
       filename: tab.filename
     }).catch(() => {});
-    
-    console.log('[搜图] 开始上传:', tab.filename, '(' + (i+1) + '/' + preparedTabs.length + ')');
-    
+
+    console.log('[搜图] 开始上传:', tab.filename, '(' + (i+1) + '/' + preparedTabs.length + ')', '模式:', uploadMode);
+
     const t_upload_start = Date.now();
-    const result = await uploadToTab(tab);
+
+    // 根据模式选择上传函数
+    let result;
+    if (uploadMode === 'cdp') {
+      result = await uploadToTabCDP(tab);
+    } else {
+      result = await uploadToTab(tab);
+    }
+
     const t_upload_elapsed = ((Date.now() - t_upload_start) / 1000).toFixed(2);
     results.push(result);
-    
+
     console.log('[搜图] 上传完成:', tab.filename, result.success ? '成功' : '失败', `耗时: ${t_upload_elapsed}s`);
-    
+
     // 短暂间隔再处理下一个（让浏览器有时间处理）
     if (i < preparedTabs.length - 1) {
       await wait(200);
     }
   }
-  
+
   return results;
 }
 
@@ -1741,6 +2345,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'checkServerNow') {
     checkServerHealth().then(() => sendResponse(serverStatus));
+    return true;
+  }
+
+  if (request.action === 'getUploadMode') {
+    getUploadMode().then(mode => sendResponse({ mode }));
+    return true;
+  }
+
+  if (request.action === 'setUploadMode') {
+    setUploadMode(request.mode).then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (request.action === 'getMemoryCheckEnabled') {
+    sendResponse({ enabled: memoryCheckEnabled });
+    return true;
+  }
+
+  if (request.action === 'setMemoryCheckEnabled') {
+    setMemoryCheckEnabled(request.enabled).then(() => sendResponse({ success: true }));
     return true;
   }
 
@@ -1758,71 +2382,150 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'startGoogleSearch') {
-    executeBatchGoogleSearch(request.images)
-      .then(results => {
-        const total = results.length;
-        const successCount = results.filter(r => r.success).length;
-        const failCount = results.filter(r => !r.success).length;
-        
-        results.forEach((r, i) => {
-          console.log(`[搜图] 图片${i+1}日志:`, r.logs?.join('\n'));
-        });
-        
-        // 发送系统通知
-        notifySearchComplete(total, successCount, failCount);
-        
-        chrome.runtime.sendMessage({
-          type: 'searchComplete',
-          successCount,
-          failCount,
-          results
-        }).catch(() => {});
-      })
-      .catch(error => {
-        // 错误也发送通知
-        showNotification('搜图任务失败', error.message);
-        
+    // 内存检查
+    checkMemoryForTask('google', request.images.length).then(memCheck => {
+      if (!memCheck.sufficient) {
         chrome.runtime.sendMessage({
           type: 'searchError',
-          error: error.message
+          error: memCheck.message
         }).catch(() => {});
-      });
-    
+        showNotification('内存不足', memCheck.message);
+        return;
+      }
+
+      // 内存充足，执行搜图
+      if (memCheck.tabsToClose > 0) {
+        showToast(memCheck.message, 'info');
+      }
+
+      executeBatchGoogleSearch(request.images)
+        .then(results => {
+          const total = results.length;
+          const successCount = results.filter(r => r.success).length;
+          const failCount = results.filter(r => !r.success).length;
+
+          results.forEach((r, i) => {
+            console.log(`[搜图] 图片${i+1}日志:`, r.logs?.join('\n'));
+          });
+
+          notifySearchComplete(total, successCount, failCount, 'google');
+
+          chrome.runtime.sendMessage({
+            type: 'searchComplete',
+            successCount,
+            failCount,
+            results
+          }).catch(() => {});
+        })
+        .catch(error => {
+          showNotification('Google 搜图任务失败', error.message);
+          chrome.runtime.sendMessage({ type: 'searchError', error: error.message }).catch(() => {});
+        });
+    });
+
     sendResponse({ started: true });
     return true;
   }
 
   if (request.action === 'startAmazonSearch') {
-    executeBatchAmazonSearch(request.images)
-      .then(results => {
-        const total = results.length;
-        const successCount = results.filter(r => r.success).length;
-        const failCount = results.filter(r => !r.success).length;
-        
-        results.forEach((r, i) => {
-          console.log(`[Amazon搜图] 图片${i+1}日志:`, r.logs?.join('\n'));
-        });
-        
-        // 发送系统通知
-        notifySearchComplete(total, successCount, failCount);
-        
-        chrome.runtime.sendMessage({
-          type: 'searchComplete',
-          successCount,
-          failCount,
-          results
-        }).catch(() => {});
-      })
-      .catch(error => {
-        // 错误也发送通知
-        showNotification('Amazon搜图任务失败', error.message);
-        
+    // 内存检查
+    checkMemoryForTask('amazon', request.images.length).then(memCheck => {
+      if (!memCheck.sufficient) {
         chrome.runtime.sendMessage({
           type: 'searchError',
-          error: error.message
+          error: memCheck.message
         }).catch(() => {});
-      });
-    
+        showNotification('内存不足', memCheck.message);
+        return;
+      }
+
+      if (memCheck.tabsToClose > 0) {
+        showToast(memCheck.message, 'info');
+      }
+
+      executeBatchAmazonSearch(request.images)
+        .then(results => {
+          const total = results.length;
+          const successCount = results.filter(r => r.success).length;
+          const failCount = results.filter(r => !r.success).length;
+
+          results.forEach((r, i) => {
+            console.log(`[Amazon搜图] 图片${i+1}日志:`, r.logs?.join('\n'));
+          });
+
+          notifySearchComplete(total, successCount, failCount, 'amazon');
+
+          chrome.runtime.sendMessage({
+            type: 'searchComplete',
+            successCount,
+            failCount,
+            results
+          }).catch(() => {});
+        })
+        .catch(error => {
+          showNotification('Amazon 搜图任务失败', error.message);
+          chrome.runtime.sendMessage({ type: 'searchError', error: error.message }).catch(() => {});
+        });
+    });
+
+    sendResponse({ started: true });
+    return true;
+  }
+
+  // 全平台搜图（Google + Amazon 并行执行）
+  if (request.action === 'startAllPlatformSearch') {
+    const images = request.images;
+
+    // 内存检查（全平台需要双倍内存）
+    checkMemoryForTask('all', images.length).then(memCheck => {
+      if (!memCheck.sufficient) {
+        chrome.runtime.sendMessage({
+          type: 'searchError',
+          error: memCheck.message
+        }).catch(() => {});
+        showNotification('内存不足', memCheck.message);
+        return;
+      }
+
+      if (memCheck.tabsToClose > 0) {
+        showToast(memCheck.message, 'info');
+      }
+
+      (async () => {
+        try {
+          console.log('[全平台] 开始并行搜图...');
+
+          const [googleResults, amazonResults] = await Promise.all([
+            executeBatchGoogleSearch(images),
+            executeBatchAmazonSearch(images)
+          ]);
+
+          const googleSuccess = googleResults.filter(r => r.success).length;
+          const googleFail = googleResults.filter(r => !r.success).length;
+          const amazonSuccess = amazonResults.filter(r => r.success).length;
+          const amazonFail = amazonResults.filter(r => !r.success).length;
+
+          console.log('[全平台] Google:', googleSuccess, '成功,', googleFail, '失败');
+          console.log('[全平台] Amazon:', amazonSuccess, '成功,', amazonFail, '失败');
+
+          const totalSuccess = googleSuccess + amazonSuccess;
+          const totalFail = googleFail + amazonFail;
+          notifySearchComplete(images.length * 2, totalSuccess, totalFail, 'all');
+
+          chrome.runtime.sendMessage({
+            type: 'searchComplete',
+            successCount: totalSuccess,
+            failCount: totalFail,
+            results: { google: googleResults, amazon: amazonResults }
+          }).catch(() => {});
+
+        } catch (error) {
+          showNotification('全平台搜图任务失败', error.message);
+          chrome.runtime.sendMessage({ type: 'searchError', error: error.message }).catch(() => {});
+        }
+      })();
+    });
+
     sendResponse({ started: true });
     return true;
   }
@@ -1852,9 +2555,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // 初始化
 chrome.runtime.onInstalled.addListener(async () => {
   await loadSearchedImages();
+  await loadMemoryCheckSetting();
   startHeartbeat();
   connectWebSocket();
 });
 
-// 服务工作者启动时也连接 WebSocket
+// 服务工作者启动时也加载设置和连接 WebSocket
+loadMemoryCheckSetting();
 connectWebSocket();

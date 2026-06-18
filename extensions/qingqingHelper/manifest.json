@@ -10,7 +10,9 @@
     "activeTab",
     "downloads",
     "tabGroups",
-    "notifications"
+    "notifications",
+    "debugger",
+    "system.memory"
   ],
   "host_permissions": [
     "<all_urls>"
